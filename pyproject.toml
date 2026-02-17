@@ -28,6 +28,9 @@ dev = [
 dl = [
   "torch",
 ]
+nlp = [
+  "transformers>=4.40",
+]
 
 [project.scripts]
 lexdrift = "lexical_drift.cli:app"

@@ -14,6 +14,7 @@ def test_cli_help() -> None:
     assert "generate-synth" in result.output
     assert "train-baseline" in result.output
     assert "train-nn" in result.output
+    assert "train-temporal" in result.output
     assert "predict" in result.output
 
 

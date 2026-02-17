@@ -1,0 +1,15 @@
+input_path: data/raw/synth.csv
+output_dir: artifacts
+test_size: 0.2
+random_seed: 42
+max_features: 5000
+encoder_model: distilbert-base-uncased
+max_length: 128
+batch_size: 16
+cache_embeddings: true
+cache_dir: artifacts/cache
+gru_hidden_dim: 128
+gru_layers: 1
+dropout: 0.2
+lr: 0.001
+epochs: 8

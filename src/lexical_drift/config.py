@@ -30,6 +30,25 @@ class NNTrainConfig:
     dropout: float
 
 
+@dataclass(slots=True)
+class TemporalTrainConfig:
+    input_path: str
+    output_dir: str
+    test_size: float
+    random_seed: int
+    max_features: int
+    encoder_model: str
+    max_length: int
+    batch_size: int
+    cache_embeddings: bool
+    cache_dir: str
+    gru_hidden_dim: int
+    gru_layers: int
+    dropout: float
+    lr: float
+    epochs: int
+
+
 def load_train_config(path: str | Path) -> TrainConfig:
     config_path = Path(path)
     with config_path.open("r", encoding="utf-8") as f:
@@ -109,5 +128,74 @@ def load_nn_train_config(path: str | Path) -> NNTrainConfig:
         raise ValueError("hidden_dim must be > 0")
     if not 0.0 <= config.dropout < 1.0:
         raise ValueError("dropout must be in [0, 1)")
+
+    return config
+
+
+def load_temporal_train_config(path: str | Path) -> TemporalTrainConfig:
+    config_path = Path(path)
+    with config_path.open("r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f) or {}
+
+    required = {
+        "input_path",
+        "output_dir",
+        "test_size",
+        "random_seed",
+        "max_features",
+        "encoder_model",
+        "max_length",
+        "batch_size",
+        "cache_embeddings",
+        "cache_dir",
+        "gru_hidden_dim",
+        "gru_layers",
+        "dropout",
+        "lr",
+        "epochs",
+    }
+    missing = sorted(required - set(raw.keys()))
+    if missing:
+        missing_keys = ", ".join(missing)
+        raise ValueError(f"Missing config keys: {missing_keys}")
+
+    config = TemporalTrainConfig(
+        input_path=str(raw["input_path"]),
+        output_dir=str(raw["output_dir"]),
+        test_size=float(raw["test_size"]),
+        random_seed=int(raw["random_seed"]),
+        max_features=int(raw["max_features"]),
+        encoder_model=str(raw["encoder_model"]),
+        max_length=int(raw["max_length"]),
+        batch_size=int(raw["batch_size"]),
+        cache_embeddings=bool(raw["cache_embeddings"]),
+        cache_dir=str(raw["cache_dir"]),
+        gru_hidden_dim=int(raw["gru_hidden_dim"]),
+        gru_layers=int(raw["gru_layers"]),
+        dropout=float(raw["dropout"]),
+        lr=float(raw["lr"]),
+        epochs=int(raw["epochs"]),
+    )
+
+    if not 0.0 < config.test_size < 1.0:
+        raise ValueError("test_size must be between 0 and 1")
+    if config.max_features <= 0:
+        raise ValueError("max_features must be > 0")
+    if not config.encoder_model.strip():
+        raise ValueError("encoder_model must be non-empty")
+    if config.max_length <= 0:
+        raise ValueError("max_length must be > 0")
+    if config.batch_size <= 0:
+        raise ValueError("batch_size must be > 0")
+    if config.gru_hidden_dim <= 0:
+        raise ValueError("gru_hidden_dim must be > 0")
+    if config.gru_layers <= 0:
+        raise ValueError("gru_layers must be > 0")
+    if not 0.0 <= config.dropout < 1.0:
+        raise ValueError("dropout must be in [0, 1)")
+    if config.lr <= 0:
+        raise ValueError("lr must be > 0")
+    if config.epochs <= 0:
+        raise ValueError("epochs must be > 0")
 
     return config

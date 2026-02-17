@@ -26,12 +26,22 @@ pip install -e ".[dev,dl]"
 lexdrift train-nn --config configs/train_nn.yaml
 ```
 
+## Temporal Transformer Baseline (Day 3)
+
+Encodes monthly writing with a frozen transformer and trains a GRU over time.
+
+```bash
+pip install -e ".[dev,dl,nlp]"
+lexdrift train-temporal --config configs/train_temporal.yaml
+```
+
 ## CLI
 
 ```bash
 lexdrift generate-synth --out data/raw/synth.csv --n-authors 50 --months 12
 lexdrift train-baseline --config configs/train_baseline.yaml
 lexdrift train-nn --config configs/train_nn.yaml
+lexdrift train-temporal --config configs/train_temporal.yaml
 lexdrift predict --model artifacts/baseline.joblib --text "I keep using like filler words now"
 ```
 

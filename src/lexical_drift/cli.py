@@ -4,7 +4,11 @@ from pathlib import Path
 
 import typer
 
-from lexical_drift.config import load_nn_train_config, load_train_config
+from lexical_drift.config import (
+    load_nn_train_config,
+    load_temporal_train_config,
+    load_train_config,
+)
 from lexical_drift.datasets.synthetic import save_synthetic_dataset
 from lexical_drift.inference.predict import predict_text
 from lexical_drift.training.train_baseline import run_training
@@ -63,6 +67,30 @@ def train_nn(
     typer.echo(f"[train-nn] model={result['model_path']}")
     typer.echo(f"[train-nn] vectorizer={result['vectorizer_path']}")
     typer.echo(f"[train-nn] metadata={result['metadata_path']}")
+
+
+@app.command("train-temporal")
+def train_temporal(
+    config: Path = typer.Option(
+        Path("configs/train_temporal.yaml"),
+        help="Path to temporal training config.",
+    ),
+) -> None:
+    # Lazy import keeps non-temporal commands usable without optional NLP dependencies.
+    from lexical_drift.training.train_temporal import run_training_temporal
+
+    temporal_config = load_temporal_train_config(config)
+    result = run_training_temporal(temporal_config)
+    typer.echo(
+        "[train-temporal] "
+        f"accuracy={result['accuracy']:.4f} "
+        f"f1={result['f1']:.4f} "
+        f"avg_loss={result['avg_loss']:.4f}"
+    )
+    typer.echo(f"[train-temporal] model={result['model_path']}")
+    if result["cache_path"]:
+        typer.echo(f"[train-temporal] cache={result['cache_path']}")
+    typer.echo(f"[train-temporal] metadata={result['metadata_path']}")
 
 
 @app.command("predict")
