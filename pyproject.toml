@@ -25,6 +25,9 @@ dev = [
   "ruff",
   "pre-commit",
 ]
+dl = [
+  "torch",
+]
 
 [project.scripts]
 lexdrift = "lexical_drift.cli:app"

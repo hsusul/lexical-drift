@@ -4,7 +4,7 @@ from pathlib import Path
 
 import typer
 
-from lexical_drift.config import load_train_config
+from lexical_drift.config import load_nn_train_config, load_train_config
 from lexical_drift.datasets.synthetic import save_synthetic_dataset
 from lexical_drift.inference.predict import predict_text
 from lexical_drift.training.train_baseline import run_training
@@ -40,6 +40,29 @@ def train_baseline(
     typer.echo(f"[train-baseline] accuracy={result['accuracy']:.4f} f1={result['f1']:.4f}")
     typer.echo(f"[train-baseline] model={result['model_path']}")
     typer.echo(f"[train-baseline] metadata={result['metadata_path']}")
+
+
+@app.command("train-nn")
+def train_nn(
+    config: Path = typer.Option(
+        Path("configs/train_nn.yaml"),
+        help="Path to neural training config.",
+    ),
+) -> None:
+    # Lazy import keeps baseline commands usable without the optional torch dependency.
+    from lexical_drift.training.train_nn import run_training_nn
+
+    nn_config = load_nn_train_config(config)
+    result = run_training_nn(nn_config)
+    typer.echo(
+        "[train-nn] "
+        f"accuracy={result['accuracy']:.4f} "
+        f"f1={result['f1']:.4f} "
+        f"avg_loss={result['avg_loss']:.4f}"
+    )
+    typer.echo(f"[train-nn] model={result['model_path']}")
+    typer.echo(f"[train-nn] vectorizer={result['vectorizer_path']}")
+    typer.echo(f"[train-nn] metadata={result['metadata_path']}")
 
 
 @app.command("predict")

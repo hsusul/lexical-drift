@@ -19,11 +19,19 @@ make demo
 - Trains a TF-IDF + logistic regression baseline from `configs/train_baseline.yaml`.
 - Writes model artifacts to `artifacts/baseline.joblib` and `artifacts/metadata.json`.
 
+## Deep Learning Baseline (Day 2)
+
+```bash
+pip install -e ".[dev,dl]"
+lexdrift train-nn --config configs/train_nn.yaml
+```
+
 ## CLI
 
 ```bash
 lexdrift generate-synth --out data/raw/synth.csv --n-authors 50 --months 12
 lexdrift train-baseline --config configs/train_baseline.yaml
+lexdrift train-nn --config configs/train_nn.yaml
 lexdrift predict --model artifacts/baseline.joblib --text "I keep using like filler words now"
 ```
 
