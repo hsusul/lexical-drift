@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Packaging
+*.egg-info/
+dist/
+build/
+
+# Virtualenvs
+.venv/
+venv/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Local artifacts
+artifacts/*
+!artifacts/.gitkeep
+*.joblib
+
+# Local data outputs (keep folder structure)
+data/raw/*.csv
+data/processed/*.csv
+
+# OS
+.DS_Store

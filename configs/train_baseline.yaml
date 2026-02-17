@@ -1,0 +1,6 @@
+input_path: data/raw/synth.csv
+output_dir: artifacts
+test_size: 0.2
+random_seed: 42
+max_features: 5000
+C: 1.0
