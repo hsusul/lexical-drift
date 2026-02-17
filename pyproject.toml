@@ -45,3 +45,6 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/lexical_drift/cli.py" = ["B008"]
