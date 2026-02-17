@@ -8,7 +8,6 @@ from typer.testing import CliRunner
 from lexical_drift.cli import app
 from lexical_drift.datasets.synthetic import save_synthetic_dataset
 
-
 runner = CliRunner()
 
 

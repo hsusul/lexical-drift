@@ -5,7 +5,6 @@ from typer.testing import CliRunner
 
 from lexical_drift.cli import app
 
-
 runner = CliRunner()
 
 

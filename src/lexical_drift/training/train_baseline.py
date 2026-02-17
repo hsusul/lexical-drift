@@ -12,7 +12,6 @@ from lexical_drift.config import TrainConfig
 from lexical_drift.models.baseline import build_baseline_model, evaluate_model
 from lexical_drift.utils import ensure_dir
 
-
 REQUIRED_COLUMNS = {"author_id", "month_index", "text", "drift_label"}
 
 

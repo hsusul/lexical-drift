@@ -52,9 +52,7 @@ def predict(
 ) -> None:
     result = predict_text(model, text)
     typer.echo(
-        "[predict] "
-        f"drift_label={result['drift_label']} "
-        f"drift_score={result['drift_score']:.4f}"
+        f"[predict] drift_label={result['drift_label']} drift_score={result['drift_score']:.4f}"
     )
 
 

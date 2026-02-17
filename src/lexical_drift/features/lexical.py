@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-
 _TOKEN_RE = re.compile(r"[A-Za-z_']+")
 
 
