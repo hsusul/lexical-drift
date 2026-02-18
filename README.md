@@ -35,6 +35,16 @@ pip install -e ".[dev,dl,nlp]"
 lexdrift train-temporal --config configs/train_temporal.yaml
 ```
 
+## Benchmark
+
+Run repeated seed-based evaluation and compare baseline, NN, and temporal models:
+
+```bash
+lexdrift benchmark --seeds 1,2,3
+```
+
+Results are appended to `artifacts/benchmark_results.jsonl`.
+
 ## CLI
 
 ```bash
@@ -42,6 +52,7 @@ lexdrift generate-synth --out data/raw/synth.csv --n-authors 50 --months 12
 lexdrift train-baseline --config configs/train_baseline.yaml
 lexdrift train-nn --config configs/train_nn.yaml
 lexdrift train-temporal --config configs/train_temporal.yaml
+lexdrift benchmark --seeds 1,2,3
 lexdrift predict --model artifacts/baseline.joblib --text "I keep using like filler words now"
 ```
 
