@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import asdict
 from pathlib import Path
@@ -12,8 +13,10 @@ from sklearn.model_selection import train_test_split
 from lexical_drift.config import TemporalTrainConfig
 from lexical_drift.datasets.temporal import build_author_sequences_with_months
 from lexical_drift.features.encoder import encode_texts_to_embeddings
-from lexical_drift.models.temporal_gru import build_temporal_gru
 from lexical_drift.utils import ensure_dir
+
+SMALL_FILE_THRESHOLD_BYTES = 2 * 1024 * 1024
+SAMPLED_HASH_BYTES = 64 * 1024
 
 
 def _import_torch_modules():
@@ -21,9 +24,7 @@ def _import_torch_modules():
         import torch
         from torch.utils.data import DataLoader, TensorDataset
     except ImportError as exc:
-        raise ImportError(
-            "PyTorch is not installed. Install with: pip install -e \".[dl]\""
-        ) from exc
+        raise ImportError('PyTorch is not installed. Install with: pip install -e ".[dl]"') from exc
 
     return torch, DataLoader, TensorDataset
 
@@ -31,6 +32,41 @@ def _import_torch_modules():
 def _cache_file_path(cache_dir: str | Path, model_name: str) -> Path:
     safe_model = model_name.replace("/", "__")
     return Path(cache_dir) / f"temporal_embeddings_{safe_model}.npz"
+
+
+def compute_dataset_fingerprint(path: Path) -> str:
+    stat = path.stat()
+    hasher = hashlib.sha256()
+    hasher.update(f"size={stat.st_size};mtime_ns={stat.st_mtime_ns}".encode())
+
+    size = int(stat.st_size)
+    if size <= SMALL_FILE_THRESHOLD_BYTES:
+        with path.open("rb") as f:
+            while True:
+                chunk = f.read(1024 * 1024)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+        return hasher.hexdigest()
+
+    # Large-file branch: hash only prefix/suffix samples (plus size/mtime above).
+    sample_size = min(SAMPLED_HASH_BYTES, size)
+    with path.open("rb") as f:
+        # Prefix sample
+        hasher.update(f.read(sample_size))
+        f.seek(max(size - sample_size, 0))
+        # Suffix sample
+        hasher.update(f.read(sample_size))
+    return hasher.hexdigest()
+
+
+def compute_cache_fingerprint(path: Path, encoder_model: str, max_length: int) -> str:
+    dataset_fingerprint = compute_dataset_fingerprint(path)
+    hasher = hashlib.sha256()
+    hasher.update(f"encoder_model={encoder_model}".encode())
+    hasher.update(f"max_length={max_length}".encode())
+    hasher.update(f"dataset={dataset_fingerprint}".encode())
+    return hasher.hexdigest()
 
 
 def _validate_equal_sequence_lengths(sequences_texts: list[list[str]]) -> int:
@@ -42,11 +78,18 @@ def _validate_equal_sequence_lengths(sequences_texts: list[list[str]]) -> int:
 
 def run_training_temporal(config: TemporalTrainConfig) -> dict[str, float | str]:
     torch, DataLoader, TensorDataset = _import_torch_modules()
+    from lexical_drift.models.temporal_gru import build_temporal_gru
 
     data_path = Path(config.input_path)
     if not data_path.exists():
         raise FileNotFoundError(f"Input dataset not found: {data_path}")
 
+    dataset_fingerprint = compute_dataset_fingerprint(data_path)
+    cache_fingerprint = compute_cache_fingerprint(
+        data_path,
+        encoder_model=config.encoder_model,
+        max_length=config.max_length,
+    )
     frame = pd.read_csv(data_path)
     authors, sequences_texts, sequences_months, labels = build_author_sequences_with_months(frame)
 
@@ -58,17 +101,31 @@ def run_training_temporal(config: TemporalTrainConfig) -> dict[str, float | str]
 
     cache_path = _cache_file_path(config.cache_dir, config.encoder_model)
     embeddings = None
+    used_cache = False
 
     if config.cache_embeddings and cache_path.exists():
-        print(f"[train-temporal] cache hit: {cache_path}")
+        print(f"[train-temporal] found cache file: {cache_path}")
         cached = np.load(cache_path, allow_pickle=True)
         cached_authors = cached["authors"].astype(str).tolist()
         cached_months = cached["months"]
         cached_embeddings = cached["embeddings"].astype(np.float32)
+        cached_fingerprint = str(cached["fingerprint"].item()) if "fingerprint" in cached else ""
 
-        if cached_authors == authors and np.array_equal(cached_months, months_matrix):
+        if (
+            cached_fingerprint == cache_fingerprint
+            and cached_authors == authors
+            and np.array_equal(cached_months, months_matrix)
+        ):
             embeddings = cached_embeddings
+            used_cache = True
             print("[train-temporal] loaded cached embeddings")
+            print(f"[train-temporal] fingerprint match: {cache_fingerprint}")
+        elif cached_fingerprint != cache_fingerprint:
+            print("[train-temporal] cache fingerprint mismatch, recomputing embeddings")
+            print(
+                f"[train-temporal] expected={cache_fingerprint[:12]} "
+                f"cached={cached_fingerprint[:12]}"
+            )
         else:
             print("[train-temporal] cache mismatch, recomputing embeddings")
 
@@ -98,6 +155,7 @@ def run_training_temporal(config: TemporalTrainConfig) -> dict[str, float | str]
                 embeddings=embeddings,
                 authors=np.asarray(authors, dtype=object),
                 months=months_matrix,
+                fingerprint=np.asarray(cache_fingerprint),
             )
             print(f"[train-temporal] saved embeddings cache to {cache_path}")
 
@@ -213,6 +271,8 @@ def run_training_temporal(config: TemporalTrainConfig) -> dict[str, float | str]
         "config": asdict(config),
         "n_authors": int(len(authors)),
         "months": int(n_months),
+        "dataset_fingerprint": dataset_fingerprint,
+        "cache_fingerprint": cache_fingerprint,
     }
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
@@ -223,4 +283,5 @@ def run_training_temporal(config: TemporalTrainConfig) -> dict[str, float | str]
         "model_path": str(model_path),
         "metadata_path": str(metadata_path),
         "cache_path": str(cache_path) if config.cache_embeddings else "",
+        "used_cache": used_cache,
     }
