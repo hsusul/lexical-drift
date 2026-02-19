@@ -3,12 +3,14 @@ from __future__ import annotations
 import importlib.util
 import json
 from dataclasses import replace
+from enum import StrEnum
 from pathlib import Path
 
 import numpy as np
 import typer
 
 from lexical_drift.config import (
+    load_eval_temporal_config,
     load_nn_train_config,
     load_temporal_train_config,
     load_train_config,
@@ -18,6 +20,11 @@ from lexical_drift.inference.predict import predict_text
 from lexical_drift.training.train_baseline import run_training
 
 app = typer.Typer(help="CLI for lexical drift data generation, training, and inference.")
+
+
+class Difficulty(StrEnum):
+    easy = "easy"
+    hard = "hard"
 
 
 def _dependency_available(module_name: str) -> bool:
@@ -43,18 +50,71 @@ def _append_jsonl(path: Path, record: dict[str, object]) -> None:
         f.write(json.dumps(record) + "\n")
 
 
+def _format_optional_metric(value: object) -> str:
+    if value is None:
+        return "na"
+    return f"{float(value):.4f}"
+
+
+def _format_summary_stats(stats: object) -> str:
+    if not isinstance(stats, dict):
+        return "na"
+    required = {"mean", "std", "min", "max"}
+    if not required.issubset(stats):
+        return "na"
+    return (
+        f"{float(stats['mean']):.4f}±{float(stats['std']):.4f} "
+        f"({float(stats['min']):.4f}..{float(stats['max']):.4f})"
+    )
+
+
+def _print_metric_summary(title: str, summary: object) -> None:
+    typer.echo(f"[eval-temporal-sweep] {title}")
+    if not isinstance(summary, dict):
+        typer.echo("[eval-temporal-sweep]   no data")
+        return
+    for metric in ("accuracy", "f1", "roc_auc", "pr_auc", "pred_pos_rate", "true_pos_rate"):
+        text = _format_summary_stats(summary.get(metric))
+        typer.echo(f"[eval-temporal-sweep]   {metric:>13} {text}")
+
+
 @app.command("generate-synth")
 def generate_synth(
     out: Path = typer.Option(Path("data/raw/synth.csv"), help="Output CSV path."),
     n_authors: int = typer.Option(50, min=1, help="Number of synthetic authors."),
     months: int = typer.Option(12, min=2, help="Number of months per author."),
     seed: int = typer.Option(42, help="Random seed."),
+    difficulty: Difficulty = typer.Option(
+        Difficulty.easy,
+        help="Synthetic generation preset difficulty.",
+    ),
+    drift_strength: float = typer.Option(
+        None,
+        help="Override drift strength (default from difficulty preset).",
+    ),
+    noise_strength: float = typer.Option(
+        None,
+        help="Override random noise strength (default from difficulty preset).",
+    ),
+    global_event_strength: float = typer.Option(
+        None,
+        help="Override global monthly event strength (default from difficulty preset).",
+    ),
+    topic_shift_strength: float = typer.Option(
+        None,
+        help="Override topic shift strength (default from difficulty preset).",
+    ),
 ) -> None:
     output = save_synthetic_dataset(
         out_path=out,
         n_authors=n_authors,
         months=months,
         random_seed=seed,
+        difficulty=difficulty.value,
+        drift_strength=drift_strength,
+        noise_strength=noise_strength,
+        global_event_strength=global_event_strength,
+        topic_shift_strength=topic_shift_strength,
     )
     typer.echo(f"[generate-synth] wrote dataset to {output}")
 
@@ -120,6 +180,175 @@ def train_temporal(
     typer.echo(f"[train-temporal] metadata={result['metadata_path']}")
 
 
+@app.command("eval-temporal")
+def eval_temporal(
+    config: Path = typer.Option(
+        Path("configs/eval_temporal.yaml"),
+        help="Path to temporal evaluation config.",
+    ),
+) -> None:
+    has_torch = _dependency_available("torch")
+    has_transformers = _dependency_available("transformers")
+    if not has_torch or not has_transformers:
+        typer.echo("[eval-temporal] skipping (torch and/or transformers not installed)")
+        return
+
+    # Lazy import keeps baseline commands usable without optional NLP dependencies.
+    from lexical_drift.eval.eval_temporal import run_eval_temporal
+
+    eval_config = load_eval_temporal_config(config)
+    result = run_eval_temporal(eval_config)
+    per_month_summary = dict(result["per_month_summary"])
+    confusion = dict(result["final_month_confusion"])
+    pred_rates = dict(result["final_month_pred_rates"])
+    pred_counts = dict(result["final_month_pred_counts"])
+    typer.echo(
+        "[eval-temporal] threshold "
+        f"mode={result['threshold_mode']} "
+        f"metric={result['calibration_metric']} "
+        f"chosen={float(result['chosen_threshold']):.4f}"
+    )
+
+    typer.echo(
+        "[eval-temporal] "
+        f"month={result['final_month_index']} "
+        f"accuracy={result['final_accuracy']:.4f} "
+        f"f1={result['final_f1']:.4f}"
+    )
+    typer.echo(
+        "[eval-temporal] per-month "
+        f"accuracy(min/mean/max)="
+        f"{per_month_summary['accuracy_min']:.4f}/"
+        f"{per_month_summary['accuracy_mean']:.4f}/"
+        f"{per_month_summary['accuracy_max']:.4f} "
+        f"f1(min/mean/max)="
+        f"{per_month_summary['f1_min']:.4f}/"
+        f"{per_month_summary['f1_mean']:.4f}/"
+        f"{per_month_summary['f1_max']:.4f}"
+    )
+    threshold_values = np.asarray(
+        [float(entry["threshold_used"]) for entry in result["per_month"]],
+        dtype=np.float64,
+    )
+    typer.echo(
+        "[eval-temporal] thresholds(min/mean/max)="
+        f"{threshold_values.min():.4f}/"
+        f"{threshold_values.mean():.4f}/"
+        f"{threshold_values.max():.4f}"
+    )
+    typer.echo(
+        "[eval-temporal] month  acc    f1     roc_auc pr_auc true_pos pred_pos "
+        "threshold_used tn fp fn tp"
+    )
+    for entry in result["per_month"]:
+        row = dict(entry)
+        roc_auc_text = _format_optional_metric(row.get("roc_auc"))
+        pr_auc_text = _format_optional_metric(row.get("pr_auc"))
+        typer.echo(
+            "[eval-temporal] "
+            f"{int(row['month_index']):>5d} "
+            f"{float(row['accuracy']):>6.4f} "
+            f"{float(row['f1']):>6.4f} "
+            f"{roc_auc_text:>7} "
+            f"{pr_auc_text:>6} "
+            f"{float(row['true_pos_rate']):>8.4f} "
+            f"{float(row['pred_pos_rate']):>8.4f} "
+            f"{float(row['threshold_used']):>14.4f} "
+            f"{int(row['tn']):>2d} "
+            f"{int(row['fp']):>2d} "
+            f"{int(row['fn']):>2d} "
+            f"{int(row['tp']):>2d}"
+        )
+    typer.echo(
+        "[eval-temporal] final confusion "
+        f"tp={confusion['tp']} fp={confusion['fp']} "
+        f"tn={confusion['tn']} fn={confusion['fn']}"
+    )
+    typer.echo(
+        "[eval-temporal] final prediction rates "
+        f"pred_0={pred_rates['pred_0_rate']:.4f} "
+        f"pred_1={pred_rates['pred_1_rate']:.4f} "
+        f"(counts: pred_0={pred_counts['pred_0']}, pred_1={pred_counts['pred_1']})"
+    )
+    typer.echo(f"[eval-temporal] metrics={result['metrics_path']}")
+    typer.echo(f"[eval-temporal] model={result['model_path']}")
+    if result["cache_path"]:
+        typer.echo(f"[eval-temporal] cache={result['cache_path']}")
+
+
+@app.command("eval-temporal-sweep")
+def eval_temporal_sweep(
+    config: Path = typer.Option(
+        Path("configs/eval_temporal.yaml"),
+        help="Path to temporal evaluation config template.",
+    ),
+    seeds: str = typer.Option(
+        "",
+        help="Comma-separated seeds (e.g. 1,2,3). Overrides --n-seeds/--start-seed.",
+    ),
+    n_seeds: int = typer.Option(10, min=1, help="Number of sequential seeds to run."),
+    start_seed: int = typer.Option(1, help="Starting seed when --seeds is not provided."),
+    n_authors: int = typer.Option(50, min=1, help="Synthetic authors per seed."),
+    months: int = typer.Option(12, min=2, help="Synthetic months per author."),
+    difficulty: Difficulty = typer.Option(
+        Difficulty.easy,
+        help="Synthetic generation preset difficulty.",
+    ),
+    artifact_root: Path = typer.Option(
+        Path("artifacts"),
+        help="Root directory for sweep outputs.",
+    ),
+    results_path: str = typer.Option(
+        "",
+        help="JSONL output file path (default: <artifact_root>/eval_temporal_sweep.jsonl).",
+    ),
+) -> None:
+    has_torch = _dependency_available("torch")
+    has_transformers = _dependency_available("transformers")
+    if not has_torch or not has_transformers:
+        typer.echo("[eval-temporal-sweep] skipping (torch and/or transformers not installed)")
+        return
+
+    from lexical_drift.eval.eval_temporal_sweep import run_eval_temporal_sweep
+
+    eval_template = load_eval_temporal_config(config)
+    seed_list = _resolve_seed_list(seeds, n_seeds, start_seed)
+    output_results = (
+        Path(results_path) if results_path else artifact_root / "eval_temporal_sweep.jsonl"
+    )
+
+    result = run_eval_temporal_sweep(
+        config_template=eval_template,
+        seeds=seed_list,
+        n_authors=n_authors,
+        months=months,
+        difficulty=difficulty.value,
+        artifact_root=artifact_root,
+        results_path=output_results,
+    )
+
+    typer.echo(f"[eval-temporal-sweep] results={result['results_path']}")
+    typer.echo(
+        "[eval-temporal-sweep] "
+        f"runs={result['total_runs']} "
+        f"success={result['success_count']} "
+        f"failed={result['failure_count']}"
+    )
+    if result["failed_seeds"]:
+        typer.echo(f"[eval-temporal-sweep] failed_seeds={result['failed_seeds']}")
+
+    final_month_index = result["final_month_index"]
+    month_label = "mixed" if final_month_index is None else str(final_month_index)
+    _print_metric_summary(
+        f"FINAL MONTH (month={month_label}): metric mean±std (min..max)",
+        result["final_month_summary"],
+    )
+    _print_metric_summary(
+        "ALL EVAL MONTHS: metric mean±std (min..max)",
+        result["all_eval_months_summary"],
+    )
+
+
 @app.command("benchmark")
 def benchmark(
     seeds: str = typer.Option(
@@ -141,8 +370,7 @@ def benchmark(
     overwrite_default_synth: bool = typer.Option(
         False,
         help=(
-            "Overwrite data/raw/synth.csv for each seed instead of using temp benchmark "
-            "data files."
+            "Overwrite data/raw/synth.csv for each seed instead of using temp benchmark data files."
         ),
     ),
     baseline_config: Path = typer.Option(

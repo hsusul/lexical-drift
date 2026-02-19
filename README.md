@@ -19,6 +19,19 @@ make demo
 - Trains a TF-IDF + logistic regression baseline from `configs/train_baseline.yaml`.
 - Writes model artifacts to `artifacts/baseline.joblib` and `artifacts/metadata.json`.
 
+## Synthetic Data Difficulty
+
+`generate-synth` now supports configurable difficulty and drift/noise controls:
+`--difficulty {easy,hard}` plus optional overrides
+`--drift-strength`, `--noise-strength`, `--global-event-strength`, and
+`--topic-shift-strength`.
+
+Example hard-mode generation:
+
+```bash
+lexdrift generate-synth --out data/raw/synth_hard.csv --n-authors 80 --months 12 --difficulty hard
+```
+
 ## Deep Learning Baseline (Day 2)
 
 ```bash
@@ -35,6 +48,16 @@ pip install -e ".[dev,dl,nlp]"
 lexdrift train-temporal --config configs/train_temporal.yaml
 ```
 
+## Temporal Evaluation (Phase 1)
+
+Train on months `[0..train_months-1]`, then evaluate each later month using prefix sequences
+up to that month. This workflow is for research experiments and is **not a medical diagnosis
+tool**.
+
+```bash
+lexdrift eval-temporal --config configs/eval_temporal.yaml
+```
+
 ## Benchmark
 
 Run repeated seed-based evaluation and compare baseline, NN, and temporal models:
@@ -45,6 +68,17 @@ lexdrift benchmark --seeds 1,2,3
 
 Results are appended to `artifacts/benchmark_results.jsonl`.
 
+## Eval Sweep
+
+Run temporal evaluation across multiple synthetic seeds to get more stable metrics:
+
+```bash
+lexdrift eval-temporal-sweep --seeds 1,2,3 --n-authors 80 --months 12 --difficulty hard
+```
+
+This writes per-seed results to `artifacts/eval_temporal_sweep.jsonl` and prints aggregate
+final-month and all-eval-month summaries.
+
 ## CLI
 
 ```bash
@@ -52,6 +86,8 @@ lexdrift generate-synth --out data/raw/synth.csv --n-authors 50 --months 12
 lexdrift train-baseline --config configs/train_baseline.yaml
 lexdrift train-nn --config configs/train_nn.yaml
 lexdrift train-temporal --config configs/train_temporal.yaml
+lexdrift eval-temporal --config configs/eval_temporal.yaml
+lexdrift eval-temporal-sweep --seeds 1,2,3 --n-authors 80 --months 12
 lexdrift benchmark --seeds 1,2,3
 lexdrift predict --model artifacts/baseline.joblib --text "I keep using like filler words now"
 ```
@@ -71,7 +107,6 @@ lexdrift predict --model artifacts/baseline.joblib --text "I keep using like fil
 
 ## Next Milestones
 
-- Add temporal split evaluation and per-month performance tracking.
 - Expand lexical and syntactic feature ablations.
 - Add dataset cards and data quality checks.
 - Add optional baseline comparison models.

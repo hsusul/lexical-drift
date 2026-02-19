@@ -18,7 +18,7 @@ def encode_texts_to_embeddings(
         from transformers import AutoModel, AutoTokenizer
     except ImportError as exc:
         raise ImportError(
-            "Transformers dependencies are missing. Install with: pip install -e \".[dl,nlp]\""
+            'Transformers dependencies are missing. Install with: pip install -e ".[dl,nlp]"'
         ) from exc
 
     tokenizer = AutoTokenizer.from_pretrained(model_name)

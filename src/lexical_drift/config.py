@@ -49,6 +49,28 @@ class TemporalTrainConfig:
     epochs: int
 
 
+@dataclass(slots=True)
+class EvalTemporalConfig:
+    input_path: str
+    output_dir: str
+    random_seed: int
+    encoder_model: str
+    max_length: int
+    batch_size: int
+    cache_embeddings: bool
+    cache_dir: str
+    train_months: int
+    gru_hidden_dim: int
+    gru_layers: int
+    dropout: float
+    lr: float
+    epochs: int
+    threshold_mode: str = "fixed"
+    fixed_threshold: float = 0.5
+    calibration_metric: str = "balanced_accuracy"
+    test_size: float | None = None
+
+
 def load_train_config(path: str | Path) -> TrainConfig:
     config_path = Path(path)
     with config_path.open("r", encoding="utf-8") as f:
@@ -197,5 +219,85 @@ def load_temporal_train_config(path: str | Path) -> TemporalTrainConfig:
         raise ValueError("lr must be > 0")
     if config.epochs <= 0:
         raise ValueError("epochs must be > 0")
+
+    return config
+
+
+def load_eval_temporal_config(path: str | Path) -> EvalTemporalConfig:
+    config_path = Path(path)
+    with config_path.open("r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f) or {}
+
+    required = {
+        "input_path",
+        "output_dir",
+        "random_seed",
+        "encoder_model",
+        "max_length",
+        "batch_size",
+        "cache_embeddings",
+        "cache_dir",
+        "train_months",
+        "gru_hidden_dim",
+        "gru_layers",
+        "dropout",
+        "lr",
+        "epochs",
+    }
+    missing = sorted(required - set(raw.keys()))
+    if missing:
+        missing_keys = ", ".join(missing)
+        raise ValueError(f"Missing config keys: {missing_keys}")
+
+    raw_test_size = raw.get("test_size")
+    config = EvalTemporalConfig(
+        input_path=str(raw["input_path"]),
+        output_dir=str(raw["output_dir"]),
+        random_seed=int(raw["random_seed"]),
+        encoder_model=str(raw["encoder_model"]),
+        max_length=int(raw["max_length"]),
+        batch_size=int(raw["batch_size"]),
+        cache_embeddings=bool(raw["cache_embeddings"]),
+        cache_dir=str(raw["cache_dir"]),
+        train_months=int(raw["train_months"]),
+        gru_hidden_dim=int(raw["gru_hidden_dim"]),
+        gru_layers=int(raw["gru_layers"]),
+        dropout=float(raw["dropout"]),
+        lr=float(raw["lr"]),
+        epochs=int(raw["epochs"]),
+        threshold_mode=str(raw.get("threshold_mode", "fixed")),
+        fixed_threshold=float(raw.get("fixed_threshold", 0.5)),
+        calibration_metric=str(raw.get("calibration_metric", "balanced_accuracy")),
+        test_size=None if raw_test_size is None else float(raw_test_size),
+    )
+
+    if not config.encoder_model.strip():
+        raise ValueError("encoder_model must be non-empty")
+    if config.max_length <= 0:
+        raise ValueError("max_length must be > 0")
+    if config.batch_size <= 0:
+        raise ValueError("batch_size must be > 0")
+    if config.train_months < 1:
+        raise ValueError("train_months must be >= 1")
+    if config.gru_hidden_dim <= 0:
+        raise ValueError("gru_hidden_dim must be > 0")
+    if config.gru_layers <= 0:
+        raise ValueError("gru_layers must be > 0")
+    if not 0.0 <= config.dropout < 1.0:
+        raise ValueError("dropout must be in [0, 1)")
+    if config.lr <= 0:
+        raise ValueError("lr must be > 0")
+    if config.epochs <= 0:
+        raise ValueError("epochs must be > 0")
+    if config.threshold_mode not in {"fixed", "calibrate_first_eval", "calibrate_each_month"}:
+        raise ValueError(
+            "threshold_mode must be one of: fixed, calibrate_first_eval, calibrate_each_month"
+        )
+    if not 0.0 < config.fixed_threshold < 1.0:
+        raise ValueError("fixed_threshold must be between 0 and 1")
+    if config.calibration_metric not in {"youden_j", "balanced_accuracy"}:
+        raise ValueError("calibration_metric must be one of: youden_j, balanced_accuracy")
+    if config.test_size is not None and not 0.0 < config.test_size < 1.0:
+        raise ValueError("test_size must be between 0 and 1 when provided")
 
     return config
