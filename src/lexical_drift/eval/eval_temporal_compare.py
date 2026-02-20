@@ -56,6 +56,7 @@ def run_eval_temporal_compare(
     output_root = ensure_dir(artifact_root)
     data_root = output_root / "compare_data"
     seed_inputs: dict[int, Path] = {}
+    shared_cache_dirs: dict[int, Path] = {}
     for seed in seeds:
         seed_path = data_root / f"synth_seed_{seed}.csv"
         save_synthetic_dataset(
@@ -66,12 +67,14 @@ def run_eval_temporal_compare(
             difficulty=difficulty,
         )
         seed_inputs[int(seed)] = seed_path
+        shared_cache_dirs[int(seed)] = output_root / "compare_cache" / f"seed_{seed}"
 
     result_a = run_eval_temporal_sweep_with_inputs(
         config_template=config_a_template,
         seeds=seeds,
         seed_input_paths=seed_inputs,
         run_root=output_root / "compare_runs" / "A",
+        cache_dirs_by_seed=shared_cache_dirs,
         results_path=output_root / "compare_runs" / "A" / "eval_temporal_sweep.jsonl",
     )
     result_b = run_eval_temporal_sweep_with_inputs(
@@ -79,6 +82,7 @@ def run_eval_temporal_compare(
         seeds=seeds,
         seed_input_paths=seed_inputs,
         run_root=output_root / "compare_runs" / "B",
+        cache_dirs_by_seed=shared_cache_dirs,
         results_path=output_root / "compare_runs" / "B" / "eval_temporal_sweep.jsonl",
     )
 

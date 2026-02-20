@@ -54,8 +54,18 @@ Train on months `[0..train_months-1]`, then evaluate each later month using pref
 up to that month. This workflow is for research experiments and is **not a medical diagnosis
 tool**.
 
+`EvalTemporalConfig.model_type` supports:
+- `gru` (default): temporal GRU classifier over monthly embedding prefixes.
+- `baseline_lr`: non-temporal logistic regression baseline on month embeddings.
+
+Each `eval-temporal` run writes these plot artifacts into that run's `output_dir`:
+- `per_month_metrics.png`
+- `threshold_over_time.png`
+- `pred_rate_over_time.png`
+
 ```bash
 lexdrift eval-temporal --config configs/eval_temporal.yaml
+lexdrift eval-temporal --config configs/eval_temporal_fixed.yaml
 ```
 
 ## Benchmark
@@ -79,6 +89,20 @@ lexdrift eval-temporal-sweep --seeds 1,2,3 --n-authors 80 --months 12 --difficul
 This writes per-seed results to `artifacts/eval_temporal_sweep.jsonl` and prints aggregate
 final-month and all-eval-month summaries.
 
+## Eval Compare
+
+Compare two eval configs on the same synthetic seeds:
+
+```bash
+lexdrift eval-temporal-compare \
+  --config-a configs/eval_temporal_fixed.yaml \
+  --config-b configs/eval_temporal_calib.yaml \
+  --seeds 1,2,3 \
+  --n-authors 50 \
+  --months 12 \
+  --difficulty hard
+```
+
 ## CLI
 
 ```bash
@@ -88,6 +112,7 @@ lexdrift train-nn --config configs/train_nn.yaml
 lexdrift train-temporal --config configs/train_temporal.yaml
 lexdrift eval-temporal --config configs/eval_temporal.yaml
 lexdrift eval-temporal-sweep --seeds 1,2,3 --n-authors 80 --months 12
+lexdrift eval-temporal-compare --config-a configs/eval_temporal_fixed.yaml --config-b configs/eval_temporal_calib.yaml --seeds 1,2,3 --n-authors 50 --months 12 --difficulty hard
 lexdrift benchmark --seeds 1,2,3
 lexdrift predict --model artifacts/baseline.joblib --text "I keep using like filler words now"
 ```

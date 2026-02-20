@@ -118,6 +118,7 @@ def run_eval_temporal_sweep_with_inputs(
     seeds: list[int],
     seed_input_paths: dict[int, str | Path],
     run_root: str | Path,
+    cache_dirs_by_seed: dict[int, str | Path] | None = None,
     results_path: str | Path | None = None,
 ) -> dict[str, object]:
     output_root = ensure_dir(run_root)
@@ -136,7 +137,10 @@ def run_eval_temporal_sweep_with_inputs(
             raise KeyError(f"Missing input path for seed={seed_int}")
         seed_data_path = Path(seed_input_paths[seed_int])
         seed_output_dir = output_root / f"seed_{seed_int}"
-        seed_cache_dir = seed_output_dir / "cache"
+        if cache_dirs_by_seed is not None and seed_int in cache_dirs_by_seed:
+            seed_cache_dir = Path(cache_dirs_by_seed[seed_int])
+        else:
+            seed_cache_dir = seed_output_dir / "cache"
 
         eval_config = replace(
             config_template,

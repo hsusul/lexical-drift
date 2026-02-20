@@ -1,6 +1,7 @@
 input_path: data/raw/synth.csv
 output_dir: artifacts
 random_seed: 42
+model_type: baseline_lr
 encoder_model: distilbert-base-uncased
 max_length: 128
 batch_size: 16

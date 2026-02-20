@@ -28,6 +28,24 @@ def _fake_encode_texts_to_embeddings(
     return np.vstack(rows)
 
 
+def _counting_fake_encoder_factory(counter: dict[str, int]):
+    def _encoder(
+        texts: list[str],
+        model_name: str,
+        max_length: int,
+        batch_size: int,
+    ) -> np.ndarray:
+        counter["calls"] += 1
+        return _fake_encode_texts_to_embeddings(
+            texts=texts,
+            model_name=model_name,
+            max_length=max_length,
+            batch_size=batch_size,
+        )
+
+    return _encoder
+
+
 def test_eval_temporal_compare_summary_and_deltas(tmp_path, monkeypatch) -> None:
     pytest.importorskip("torch")
     monkeypatch.setattr(
@@ -130,3 +148,55 @@ def test_eval_temporal_compare_summary_and_deltas(tmp_path, monkeypatch) -> None
     assert (plot_dir_b / "per_month_metrics.png").exists()
     assert (plot_dir_b / "threshold_over_time.png").exists()
     assert (plot_dir_b / "pred_rate_over_time.png").exists()
+
+
+def test_eval_temporal_compare_reuses_shared_cache(tmp_path, monkeypatch) -> None:
+    pytest.importorskip("torch")
+    call_counter = {"calls": 0}
+    monkeypatch.setattr(
+        eval_temporal,
+        "encode_texts_to_embeddings",
+        _counting_fake_encoder_factory(call_counter),
+    )
+
+    base_config = EvalTemporalConfig(
+        input_path=str(tmp_path / "placeholder.csv"),
+        output_dir=str(tmp_path / "placeholder_out"),
+        random_seed=0,
+        model_type="baseline_lr",
+        encoder_model="distilbert-base-uncased",
+        max_length=64,
+        batch_size=8,
+        cache_embeddings=True,
+        cache_dir=str(tmp_path / "placeholder_cache"),
+        train_months=8,
+        gru_hidden_dim=16,
+        gru_layers=1,
+        dropout=0.1,
+        lr=0.001,
+        epochs=1,
+        threshold_mode="fixed",
+        fixed_threshold=0.5,
+        calibration_metric="balanced_accuracy",
+        test_size=0.2,
+    )
+    config_a = base_config
+    config_b = replace(
+        base_config,
+        threshold_mode="calibrate_each_month",
+        calibration_metric="youden_j",
+    )
+
+    run_eval_temporal_compare(
+        config_a_template=config_a,
+        config_b_template=config_b,
+        config_a_path=tmp_path / "eval_a.yaml",
+        config_b_path=tmp_path / "eval_b.yaml",
+        seeds=[1, 2],
+        n_authors=40,
+        months=12,
+        difficulty="hard",
+        artifact_root=tmp_path / "artifacts",
+    )
+
+    assert call_counter["calls"] == 2
