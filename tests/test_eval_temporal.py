@@ -114,6 +114,10 @@ def test_eval_temporal_per_month_metrics_and_cache(tmp_path, monkeypatch) -> Non
         assert "month_index" in month_entry
         assert "accuracy" in month_entry
         assert "f1" in month_entry
+        assert "precision" in month_entry
+        assert "recall" in month_entry
+        assert "specificity" in month_entry
+        assert "balanced_accuracy" in month_entry
         assert "roc_auc" in month_entry
         assert "pr_auc" in month_entry
         assert "true_pos_rate" in month_entry
@@ -141,6 +145,10 @@ def test_eval_temporal_per_month_metrics_and_cache(tmp_path, monkeypatch) -> Non
     assert isinstance(first["per_month"][0]["pred_pos_rate"], float)
     assert isinstance(first["per_month"][0]["tn"], int)
     assert isinstance(first["per_month"][0]["threshold_used"], float)
+    assert isinstance(first["per_month"][0]["precision"], float)
+    assert isinstance(first["per_month"][0]["recall"], float)
+    assert isinstance(first["per_month"][0]["specificity"], float)
+    assert isinstance(first["per_month"][0]["balanced_accuracy"], float)
     assert first["per_month"][0]["roc_auc"] is None or isinstance(
         first["per_month"][0]["roc_auc"], float
     )

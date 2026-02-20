@@ -89,6 +89,11 @@ def test_eval_temporal_sweep_runs_and_aggregates(tmp_path, monkeypatch) -> None:
         assert "used_cache" in record
         assert isinstance(record["per_month"], list)
         assert len(record["per_month"]) == 3
+        for month_entry in record["per_month"]:
+            assert "precision" in month_entry
+            assert "recall" in month_entry
+            assert "specificity" in month_entry
+            assert "balanced_accuracy" in month_entry
 
     summary = aggregate_sweep_metrics(records)
     assert isinstance(summary, dict)
@@ -99,3 +104,4 @@ def test_eval_temporal_sweep_runs_and_aggregates(tmp_path, monkeypatch) -> None:
     assert isinstance(summary["all_eval_months_summary"], dict)
     assert isinstance(summary["final_month_summary"]["accuracy"], dict)
     assert isinstance(summary["all_eval_months_summary"]["f1"], dict)
+    assert isinstance(summary["final_month_summary"]["balanced_accuracy"], dict)

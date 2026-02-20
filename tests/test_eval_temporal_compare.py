@@ -106,6 +106,10 @@ def test_eval_temporal_compare_summary_and_deltas(tmp_path, monkeypatch) -> None
         for metric in (
             "accuracy",
             "f1",
+            "precision",
+            "recall",
+            "specificity",
+            "balanced_accuracy",
             "roc_auc",
             "pr_auc",
             "pred_pos_rate",

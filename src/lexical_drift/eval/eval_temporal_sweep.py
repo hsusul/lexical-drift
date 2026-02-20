@@ -14,6 +14,10 @@ from lexical_drift.utils import ensure_dir
 SUMMARY_METRICS = (
     "accuracy",
     "f1",
+    "precision",
+    "recall",
+    "specificity",
+    "balanced_accuracy",
     "roc_auc",
     "pr_auc",
     "pred_pos_rate",

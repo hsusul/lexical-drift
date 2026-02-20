@@ -47,6 +47,29 @@ def _compute_binary_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str,
     }
 
 
+def _compute_confusion_metrics(
+    *,
+    tn: int,
+    fp: int,
+    fn: int,
+    tp: int,
+) -> dict[str, float]:
+    precision_den = tp + fp
+    recall_den = tp + fn
+    specificity_den = tn + fp
+
+    precision = float(tp / precision_den) if precision_den > 0 else 0.0
+    recall = float(tp / recall_den) if recall_den > 0 else 0.0
+    specificity = float(tn / specificity_den) if specificity_den > 0 else 0.0
+    balanced_accuracy = 0.5 * (recall + specificity)
+    return {
+        "precision": precision,
+        "recall": recall,
+        "specificity": specificity,
+        "balanced_accuracy": float(balanced_accuracy),
+    }
+
+
 def choose_threshold(
     y_true: np.ndarray,
     probs: np.ndarray,
@@ -264,6 +287,7 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
             fn = int(np.sum((preds == 0) & (y_eval == 1)))
             tp = int(np.sum((preds == 1) & (y_eval == 1)))
             month_metrics = _compute_binary_metrics(y_eval, preds)
+            confusion_metrics = _compute_confusion_metrics(tn=tn, fp=fp, fn=fn, tp=tp)
             roc_auc: float | None = None
             pr_auc: float | None = None
             if np.unique(y_eval).size > 1:
@@ -274,6 +298,10 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
                     "month_index": int(month_index),
                     "accuracy": month_metrics["accuracy"],
                     "f1": month_metrics["f1"],
+                    "precision": confusion_metrics["precision"],
+                    "recall": confusion_metrics["recall"],
+                    "specificity": confusion_metrics["specificity"],
+                    "balanced_accuracy": confusion_metrics["balanced_accuracy"],
                     "roc_auc": roc_auc,
                     "pr_auc": pr_auc,
                     "true_pos_rate": float(np.mean(y_eval)),

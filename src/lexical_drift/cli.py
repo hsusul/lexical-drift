@@ -81,6 +81,10 @@ def _print_metric_summary(
     for metric in (
         "accuracy",
         "f1",
+        "precision",
+        "recall",
+        "specificity",
+        "balanced_accuracy",
         "roc_auc",
         "pr_auc",
         "pred_pos_rate",
@@ -110,6 +114,10 @@ def _print_metric_delta(
     for metric in (
         "accuracy",
         "f1",
+        "precision",
+        "recall",
+        "specificity",
+        "balanced_accuracy",
         "roc_auc",
         "pr_auc",
         "pred_pos_rate",
@@ -278,8 +286,7 @@ def eval_temporal(
         f"{threshold_values.max():.4f}"
     )
     typer.echo(
-        "[eval-temporal] month  acc    f1     roc_auc pr_auc true_pos pred_pos "
-        "threshold_used tn fp fn tp"
+        "[eval-temporal] month  acc    f1    prec   rec    spec   bal_acc roc_auc pr_auc threshold"
     )
     for entry in result["per_month"]:
         row = dict(entry)
@@ -290,11 +297,22 @@ def eval_temporal(
             f"{int(row['month_index']):>5d} "
             f"{float(row['accuracy']):>6.4f} "
             f"{float(row['f1']):>6.4f} "
+            f"{float(row['precision']):>6.4f} "
+            f"{float(row['recall']):>6.4f} "
+            f"{float(row['specificity']):>7.4f} "
+            f"{float(row['balanced_accuracy']):>8.4f} "
             f"{roc_auc_text:>7} "
             f"{pr_auc_text:>6} "
+            f"{float(row['threshold_used']):>9.4f}"
+        )
+    typer.echo("[eval-temporal] month  true_pos pred_pos tn fp fn tp")
+    for entry in result["per_month"]:
+        row = dict(entry)
+        typer.echo(
+            "[eval-temporal] "
+            f"{int(row['month_index']):>5d} "
             f"{float(row['true_pos_rate']):>8.4f} "
             f"{float(row['pred_pos_rate']):>8.4f} "
-            f"{float(row['threshold_used']):>14.4f} "
             f"{int(row['tn']):>2d} "
             f"{int(row['fp']):>2d} "
             f"{int(row['fn']):>2d} "
