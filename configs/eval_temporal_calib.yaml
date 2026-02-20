@@ -1,0 +1,18 @@
+input_path: data/raw/synth.csv
+output_dir: artifacts
+random_seed: 42
+encoder_model: distilbert-base-uncased
+max_length: 128
+batch_size: 16
+cache_embeddings: true
+cache_dir: artifacts/cache
+train_months: 8
+lr: 0.001
+gru_hidden_dim: 256
+gru_layers: 2
+dropout: 0.3
+epochs: 12
+threshold_mode: calibrate_each_month
+calibration_metric: youden_j
+fixed_threshold: 0.5                    # harmless, ignored in calibrate mode
+test_size: 0.2

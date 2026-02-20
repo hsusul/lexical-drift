@@ -68,14 +68,55 @@ def _format_summary_stats(stats: object) -> str:
     )
 
 
-def _print_metric_summary(title: str, summary: object) -> None:
-    typer.echo(f"[eval-temporal-sweep] {title}")
+def _print_metric_summary(
+    title: str,
+    summary: object,
+    *,
+    prefix: str = "[eval-temporal-sweep]",
+) -> None:
+    typer.echo(f"{prefix} {title}")
     if not isinstance(summary, dict):
-        typer.echo("[eval-temporal-sweep]   no data")
+        typer.echo(f"{prefix}   no data")
         return
-    for metric in ("accuracy", "f1", "roc_auc", "pr_auc", "pred_pos_rate", "true_pos_rate"):
+    for metric in (
+        "accuracy",
+        "f1",
+        "roc_auc",
+        "pr_auc",
+        "pred_pos_rate",
+        "true_pos_rate",
+        "threshold_used",
+    ):
         text = _format_summary_stats(summary.get(metric))
-        typer.echo(f"[eval-temporal-sweep]   {metric:>13} {text}")
+        typer.echo(f"{prefix}   {metric:>13} {text}")
+
+
+def _format_delta(value: object) -> str:
+    if value is None:
+        return "na"
+    return f"{float(value):+.4f}"
+
+
+def _print_metric_delta(
+    title: str,
+    delta: object,
+    *,
+    prefix: str = "[eval-temporal-compare]",
+) -> None:
+    typer.echo(f"{prefix} {title}")
+    if not isinstance(delta, dict):
+        typer.echo(f"{prefix}   no data")
+        return
+    for metric in (
+        "accuracy",
+        "f1",
+        "roc_auc",
+        "pr_auc",
+        "pred_pos_rate",
+        "true_pos_rate",
+        "threshold_used",
+    ):
+        typer.echo(f"{prefix}   {metric:>13} {_format_delta(delta.get(metric))}")
 
 
 @app.command("generate-synth")
@@ -346,6 +387,108 @@ def eval_temporal_sweep(
     _print_metric_summary(
         "ALL EVAL MONTHS: metric mean±std (min..max)",
         result["all_eval_months_summary"],
+    )
+
+
+@app.command("eval-temporal-compare")
+def eval_temporal_compare(
+    config_a: Path = typer.Option(
+        Path("configs/eval_temporal.yaml"),
+        help="Path to eval-temporal config A.",
+    ),
+    config_b: Path = typer.Option(
+        Path("configs/eval_temporal.yaml"),
+        help="Path to eval-temporal config B.",
+    ),
+    seeds: str = typer.Option(
+        "",
+        help="Comma-separated seeds (e.g. 1,2,3). Overrides --n-seeds/--start-seed.",
+    ),
+    n_seeds: int = typer.Option(10, min=1, help="Number of sequential seeds to run."),
+    start_seed: int = typer.Option(1, help="Starting seed when --seeds is not provided."),
+    n_authors: int = typer.Option(200, min=1, help="Synthetic authors per seed."),
+    months: int = typer.Option(12, min=2, help="Synthetic months per author."),
+    difficulty: Difficulty = typer.Option(
+        Difficulty.hard,
+        help="Synthetic generation preset difficulty.",
+    ),
+    artifact_root: Path = typer.Option(
+        Path("artifacts"),
+        help="Root directory for compare outputs.",
+    ),
+) -> None:
+    has_torch = _dependency_available("torch")
+    has_transformers = _dependency_available("transformers")
+    if not has_torch or not has_transformers:
+        typer.echo("[eval-temporal-compare] skipping (torch and/or transformers not installed)")
+        return
+
+    from lexical_drift.eval.eval_temporal_compare import run_eval_temporal_compare
+
+    cfg_a = load_eval_temporal_config(config_a)
+    cfg_b = load_eval_temporal_config(config_b)
+    seed_list = _resolve_seed_list(seeds, n_seeds, start_seed)
+
+    result = run_eval_temporal_compare(
+        config_a_template=cfg_a,
+        config_b_template=cfg_b,
+        config_a_path=config_a,
+        config_b_path=config_b,
+        seeds=seed_list,
+        n_authors=n_authors,
+        months=months,
+        difficulty=difficulty.value,
+        artifact_root=artifact_root,
+    )
+
+    summary_a = dict(result["summary_a"])
+    summary_b = dict(result["summary_b"])
+    typer.echo(f"[eval-temporal-compare] summary={result['summary_path']}")
+    typer.echo(
+        "[eval-temporal-compare] "
+        f"A success={summary_a['success_count']}/{summary_a['total_runs']} "
+        f"failed={summary_a['failure_count']}"
+    )
+    typer.echo(
+        "[eval-temporal-compare] "
+        f"B success={summary_b['success_count']}/{summary_b['total_runs']} "
+        f"failed={summary_b['failure_count']}"
+    )
+
+    month_a = summary_a["final_month_index"]
+    month_b = summary_b["final_month_index"]
+    month_label_a = "mixed" if month_a is None else str(month_a)
+    month_label_b = "mixed" if month_b is None else str(month_b)
+    _print_metric_summary(
+        f"A FINAL MONTH (month={month_label_a}): metric mean±std (min..max)",
+        result["final_month_summary_a"],
+        prefix="[eval-temporal-compare]",
+    )
+    _print_metric_summary(
+        f"B FINAL MONTH (month={month_label_b}): metric mean±std (min..max)",
+        result["final_month_summary_b"],
+        prefix="[eval-temporal-compare]",
+    )
+    _print_metric_delta(
+        "DELTA FINAL MONTH (B_mean - A_mean)",
+        result["final_month_delta"],
+        prefix="[eval-temporal-compare]",
+    )
+
+    _print_metric_summary(
+        "A ALL EVAL MONTHS: metric mean±std (min..max)",
+        result["all_months_summary_a"],
+        prefix="[eval-temporal-compare]",
+    )
+    _print_metric_summary(
+        "B ALL EVAL MONTHS: metric mean±std (min..max)",
+        result["all_months_summary_b"],
+        prefix="[eval-temporal-compare]",
+    )
+    _print_metric_delta(
+        "DELTA ALL EVAL MONTHS (B_mean - A_mean)",
+        result["all_months_delta"],
+        prefix="[eval-temporal-compare]",
     )
 
 

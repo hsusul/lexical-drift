@@ -17,6 +17,7 @@ def test_cli_help() -> None:
     assert "train-temporal" in result.output
     assert "eval-temporal" in result.output
     assert "eval-temporal-sweep" in result.output
+    assert "eval-temporal-compare" in result.output
     assert "benchmark" in result.output
     assert "predict" in result.output
 

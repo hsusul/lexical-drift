@@ -18,6 +18,7 @@ SUMMARY_METRICS = (
     "pr_auc",
     "pred_pos_rate",
     "true_pos_rate",
+    "threshold_used",
 )
 
 
@@ -107,17 +108,15 @@ def aggregate_sweep_metrics(records: list[dict[str, object]]) -> dict[str, objec
     }
 
 
-def run_eval_temporal_sweep(
+def run_eval_temporal_sweep_with_inputs(
     *,
     config_template: EvalTemporalConfig,
     seeds: list[int],
-    n_authors: int,
-    months: int,
-    difficulty: str,
-    artifact_root: str | Path = "artifacts",
+    seed_input_paths: dict[int, str | Path],
+    run_root: str | Path,
     results_path: str | Path | None = None,
 ) -> dict[str, object]:
-    output_root = ensure_dir(artifact_root)
+    output_root = ensure_dir(run_root)
     output_results = (
         Path(results_path) if results_path else output_root / "eval_temporal_sweep.jsonl"
     )
@@ -128,24 +127,18 @@ def run_eval_temporal_sweep(
     records: list[dict[str, object]] = []
 
     for seed in seeds:
-        seed_data_path = output_root / "eval_sweep_data" / f"synth_seed_{seed}.csv"
-        seed_run_root = output_root / "eval_sweep_runs" / f"seed_{seed}"
-        seed_output_dir = seed_run_root
-        seed_cache_dir = seed_run_root / "cache"
-
-        save_synthetic_dataset(
-            out_path=seed_data_path,
-            n_authors=n_authors,
-            months=months,
-            random_seed=seed,
-            difficulty=difficulty,
-        )
+        seed_int = int(seed)
+        if seed_int not in seed_input_paths:
+            raise KeyError(f"Missing input path for seed={seed_int}")
+        seed_data_path = Path(seed_input_paths[seed_int])
+        seed_output_dir = output_root / f"seed_{seed_int}"
+        seed_cache_dir = seed_output_dir / "cache"
 
         eval_config = replace(
             config_template,
             input_path=str(seed_data_path),
             output_dir=str(seed_output_dir),
-            random_seed=seed,
+            random_seed=seed_int,
             cache_dir=str(seed_cache_dir),
         )
 
@@ -193,3 +186,38 @@ def run_eval_temporal_sweep(
         "records": records,
         **aggregate,
     }
+
+
+def run_eval_temporal_sweep(
+    *,
+    config_template: EvalTemporalConfig,
+    seeds: list[int],
+    n_authors: int,
+    months: int,
+    difficulty: str,
+    artifact_root: str | Path = "artifacts",
+    results_path: str | Path | None = None,
+) -> dict[str, object]:
+    output_root = ensure_dir(artifact_root)
+    seed_inputs: dict[int, Path] = {}
+    data_root = output_root / "eval_sweep_data"
+    for seed in seeds:
+        seed_data_path = data_root / f"synth_seed_{seed}.csv"
+        save_synthetic_dataset(
+            out_path=seed_data_path,
+            n_authors=n_authors,
+            months=months,
+            random_seed=seed,
+            difficulty=difficulty,
+        )
+        seed_inputs[int(seed)] = seed_data_path
+
+    return run_eval_temporal_sweep_with_inputs(
+        config_template=config_template,
+        seeds=seeds,
+        seed_input_paths=seed_inputs,
+        run_root=output_root / "eval_sweep_runs",
+        results_path=results_path
+        if results_path is not None
+        else output_root / "eval_temporal_sweep.jsonl",
+    )
