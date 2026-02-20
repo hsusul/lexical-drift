@@ -32,14 +32,14 @@ Example hard-mode generation:
 lexdrift generate-synth --out data/raw/synth_hard.csv --n-authors 80 --months 12 --difficulty hard
 ```
 
-## Deep Learning Baseline (Day 2)
+## Deep Learning Baseline
 
 ```bash
 pip install -e ".[dev,dl]"
 lexdrift train-nn --config configs/train_nn.yaml
 ```
 
-## Temporal Transformer Baseline (Day 3)
+## Temporal Transformer Baseline
 
 Encodes monthly writing with a frozen transformer and trains a GRU over time.
 
@@ -48,7 +48,7 @@ pip install -e ".[dev,dl,nlp]"
 lexdrift train-temporal --config configs/train_temporal.yaml
 ```
 
-## Temporal Evaluation (Phase 1)
+## Temporal Evaluation
 
 Train on months `[0..train_months-1]`, then evaluate each later month using prefix sequences
 up to that month. This workflow is for research experiments and is **not a medical diagnosis
