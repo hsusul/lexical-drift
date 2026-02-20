@@ -251,6 +251,7 @@ def eval_temporal(
     confusion = dict(result["final_month_confusion"])
     pred_rates = dict(result["final_month_pred_rates"])
     pred_counts = dict(result["final_month_pred_counts"])
+    typer.echo(f"[eval-temporal] model_type={result['model_type']}")
     typer.echo(
         "[eval-temporal] threshold "
         f"mode={result['threshold_mode']} "
@@ -387,6 +388,7 @@ def eval_temporal_sweep(
     )
 
     typer.echo(f"[eval-temporal-sweep] results={result['results_path']}")
+    typer.echo(f"[eval-temporal-sweep] model_type={result['model_type']}")
     typer.echo(
         "[eval-temporal-sweep] "
         f"runs={result['total_runs']} "
@@ -464,12 +466,14 @@ def eval_temporal_compare(
     typer.echo(f"[eval-temporal-compare] summary={result['summary_path']}")
     typer.echo(
         "[eval-temporal-compare] "
-        f"A success={summary_a['success_count']}/{summary_a['total_runs']} "
+        f"A model_type={summary_a['model_type']} "
+        f"success={summary_a['success_count']}/{summary_a['total_runs']} "
         f"failed={summary_a['failure_count']}"
     )
     typer.echo(
         "[eval-temporal-compare] "
-        f"B success={summary_b['success_count']}/{summary_b['total_runs']} "
+        f"B model_type={summary_b['model_type']} "
+        f"success={summary_b['success_count']}/{summary_b['total_runs']} "
         f"failed={summary_b['failure_count']}"
     )
 

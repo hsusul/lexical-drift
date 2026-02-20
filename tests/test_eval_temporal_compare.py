@@ -99,6 +99,8 @@ def test_eval_temporal_compare_summary_and_deltas(tmp_path, monkeypatch) -> None
         "all_months_delta",
     }
     assert required_keys.issubset(payload)
+    assert payload["summary_a"]["model_type"] == "gru"
+    assert payload["summary_b"]["model_type"] == "gru"
 
     for section in ("final_month_delta", "all_months_delta"):
         values = payload[section]
@@ -119,3 +121,12 @@ def test_eval_temporal_compare_summary_and_deltas(tmp_path, monkeypatch) -> None
             assert metric in values
             metric_value = values[metric]
             assert metric_value is None or isinstance(metric_value, float)
+
+    plot_dir_a = tmp_path / "artifacts" / "compare_runs" / "A" / "seed_1"
+    plot_dir_b = tmp_path / "artifacts" / "compare_runs" / "B" / "seed_1"
+    assert (plot_dir_a / "per_month_metrics.png").exists()
+    assert (plot_dir_a / "threshold_over_time.png").exists()
+    assert (plot_dir_a / "pred_rate_over_time.png").exists()
+    assert (plot_dir_b / "per_month_metrics.png").exists()
+    assert (plot_dir_b / "threshold_over_time.png").exists()
+    assert (plot_dir_b / "pred_rate_over_time.png").exists()

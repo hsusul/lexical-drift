@@ -4,10 +4,14 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
+import joblib
 import numpy as np
 import pandas as pd
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, average_precision_score, f1_score, roc_auc_score
 from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 
 from lexical_drift.config import EvalTemporalConfig
 from lexical_drift.datasets.temporal import build_author_sequences_with_months
@@ -168,11 +172,95 @@ def _load_or_encode_embeddings(
     return embeddings, cache_path, used_cache
 
 
-def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
-    torch, DataLoader, TensorDataset = _import_torch_modules()
-    from lexical_drift.models.temporal_gru import build_temporal_gru
+def _import_matplotlib_pyplot():
+    try:
+        import matplotlib
 
-    torch.manual_seed(config.random_seed)
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError as exc:
+        raise ImportError(
+            "matplotlib is required for eval-temporal plots. Install with: pip install matplotlib"
+        ) from exc
+
+    return plt
+
+
+def _series_from_per_month(per_month: list[dict[str, float | int]], key: str) -> np.ndarray:
+    values: list[float] = []
+    for entry in per_month:
+        raw = entry.get(key)
+        values.append(np.nan if raw is None else float(raw))
+    return np.asarray(values, dtype=np.float64)
+
+
+def _save_eval_plots(
+    *,
+    per_month: list[dict[str, float | int]],
+    output_dir: Path,
+) -> dict[str, str]:
+    plt = _import_matplotlib_pyplot()
+    months = np.asarray([int(entry["month_index"]) for entry in per_month], dtype=np.int64)
+
+    per_month_metrics_path = output_dir / "per_month_metrics.png"
+    fig, ax = plt.subplots(figsize=(8, 4))
+    for metric_name in ("accuracy", "f1", "balanced_accuracy", "roc_auc", "pr_auc"):
+        values = _series_from_per_month(per_month, metric_name)
+        if np.isnan(values).all():
+            continue
+        ax.plot(months, values, marker="o", label=metric_name)
+    ax.set_xlabel("month_index")
+    ax.set_ylabel("score")
+    ax.set_ylim(0.0, 1.0)
+    ax.set_title("Per-month evaluation metrics")
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(loc="best")
+    fig.tight_layout()
+    fig.savefig(per_month_metrics_path, dpi=150)
+    plt.close(fig)
+
+    threshold_path = output_dir / "threshold_over_time.png"
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.plot(months, _series_from_per_month(per_month, "threshold_used"), marker="o")
+    ax.set_xlabel("month_index")
+    ax.set_ylabel("threshold")
+    ax.set_ylim(0.0, 1.0)
+    ax.set_title("Threshold over time")
+    fig.tight_layout()
+    fig.savefig(threshold_path, dpi=150)
+    plt.close(fig)
+
+    pred_rate_path = output_dir / "pred_rate_over_time.png"
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.plot(
+        months,
+        _series_from_per_month(per_month, "pred_pos_rate"),
+        marker="o",
+        label="pred_pos_rate",
+    )
+    ax.plot(
+        months,
+        _series_from_per_month(per_month, "true_pos_rate"),
+        marker="o",
+        label="true_pos_rate",
+    )
+    ax.set_xlabel("month_index")
+    ax.set_ylabel("rate")
+    ax.set_ylim(0.0, 1.0)
+    ax.set_title("Prediction rate over time")
+    ax.legend(loc="best")
+    fig.tight_layout()
+    fig.savefig(pred_rate_path, dpi=150)
+    plt.close(fig)
+
+    return {
+        "per_month_metrics_path": str(per_month_metrics_path),
+        "threshold_over_time_path": str(threshold_path),
+        "pred_rate_over_time_path": str(pred_rate_path),
+    }
+
+
+def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
     np.random.seed(config.random_seed)
 
     data_path = Path(config.input_path)
@@ -219,103 +307,185 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
             stratify=stratify,
         )
 
-    X_train = embeddings[train_idx, : config.train_months, :]
-    y_train = labels[train_idx].astype(np.float32)
-    y_eval = labels[eval_idx].astype(int)
-
-    train_dataset = TensorDataset(
-        torch.from_numpy(X_train),
-        torch.from_numpy(y_train).unsqueeze(1),
-    )
-    train_generator = torch.Generator().manual_seed(config.random_seed)
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=config.batch_size,
-        shuffle=True,
-        generator=train_generator,
-    )
-
     input_dim = int(embeddings.shape[2])
-    model = build_temporal_gru(
-        input_dim=input_dim,
-        hidden_dim=config.gru_hidden_dim,
-        layers=config.gru_layers,
-        dropout=config.dropout,
-    )
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.lr)
-    criterion = torch.nn.BCEWithLogitsLoss()
+    y_eval = labels[eval_idx].astype(int)
+    output_dir = ensure_dir(config.output_dir)
 
-    for epoch in range(config.epochs):
-        model.train()
-        epoch_loss = 0.0
-        epoch_count = 0
-        for batch_x, batch_y in train_loader:
-            optimizer.zero_grad()
-            logits = model(batch_x)
-            loss = criterion(logits, batch_y)
-            loss.backward()
-            optimizer.step()
+    if config.model_type == "gru":
+        torch, DataLoader, TensorDataset = _import_torch_modules()
+        from lexical_drift.models.temporal_gru import build_temporal_gru
 
-            batch_size = int(batch_x.shape[0])
-            epoch_loss += float(loss.item()) * batch_size
-            epoch_count += batch_size
-        avg_loss = epoch_loss / max(epoch_count, 1)
-        print(f"[eval-temporal] epoch={epoch + 1}/{config.epochs} train_loss={avg_loss:.4f}")
+        torch.manual_seed(config.random_seed)
+        X_train = embeddings[train_idx, : config.train_months, :]
+        y_train = labels[train_idx].astype(np.float32)
 
-    model.eval()
+        train_dataset = TensorDataset(
+            torch.from_numpy(X_train),
+            torch.from_numpy(y_train).unsqueeze(1),
+        )
+        train_generator = torch.Generator().manual_seed(config.random_seed)
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=config.batch_size,
+            shuffle=True,
+            generator=train_generator,
+        )
+
+        model = build_temporal_gru(
+            input_dim=input_dim,
+            hidden_dim=config.gru_hidden_dim,
+            layers=config.gru_layers,
+            dropout=config.dropout,
+        )
+        optimizer = torch.optim.Adam(model.parameters(), lr=config.lr)
+        criterion = torch.nn.BCEWithLogitsLoss()
+
+        for epoch in range(config.epochs):
+            model.train()
+            epoch_loss = 0.0
+            epoch_count = 0
+            for batch_x, batch_y in train_loader:
+                optimizer.zero_grad()
+                logits = model(batch_x)
+                loss = criterion(logits, batch_y)
+                loss.backward()
+                optimizer.step()
+
+                batch_size = int(batch_x.shape[0])
+                epoch_loss += float(loss.item()) * batch_size
+                epoch_count += batch_size
+            avg_loss = epoch_loss / max(epoch_count, 1)
+            print(f"[eval-temporal] epoch={epoch + 1}/{config.epochs} train_loss={avg_loss:.4f}")
+
+        model.eval()
+        model_path = output_dir / "eval_temporal_model.pt"
+        torch.save(
+            {
+                "state_dict": model.state_dict(),
+                "input_dim": input_dim,
+                "gru_hidden_dim": int(config.gru_hidden_dim),
+                "gru_layers": int(config.gru_layers),
+                "dropout": float(config.dropout),
+                "encoder_model": config.encoder_model,
+                "max_length": int(config.max_length),
+                "train_months": int(config.train_months),
+                "model_type": config.model_type,
+            },
+            model_path,
+        )
+
+        def predict_probs(month_index: int) -> np.ndarray:
+            with torch.no_grad():
+                X_eval = embeddings[eval_idx, : month_index + 1, :]
+                logits = model(torch.from_numpy(X_eval))
+                probs = torch.sigmoid(logits).squeeze(1).cpu().numpy()
+            return probs.astype(np.float32)
+
+    elif config.model_type == "baseline_lr":
+        X_train_flat = embeddings[train_idx, : config.train_months, :].reshape(-1, input_dim)
+        y_train_flat = np.repeat(labels[train_idx].astype(int), config.train_months)
+        baseline_model: Pipeline | None
+        constant_prob: float | None
+        if y_train_flat.size == 0:
+            constant_prob = 0.0
+            baseline_model = None
+        elif np.unique(y_train_flat).size < 2:
+            constant_prob = float(y_train_flat[0])
+            baseline_model = None
+            print(
+                "[eval-temporal] baseline_lr detected single-class training data; "
+                "using constant probabilities"
+            )
+        else:
+            baseline_model = Pipeline(
+                [
+                    ("scaler", StandardScaler()),
+                    (
+                        "clf",
+                        LogisticRegression(
+                            random_state=config.random_seed,
+                            max_iter=1000,
+                        ),
+                    ),
+                ]
+            )
+            baseline_model.fit(X_train_flat, y_train_flat)
+            constant_prob = None
+
+        model_path = output_dir / "eval_temporal_model.joblib"
+        joblib.dump(
+            {
+                "model_type": config.model_type,
+                "model": baseline_model,
+                "constant_prob": constant_prob,
+                "input_dim": input_dim,
+                "encoder_model": config.encoder_model,
+                "max_length": int(config.max_length),
+                "train_months": int(config.train_months),
+            },
+            model_path,
+        )
+
+        def predict_probs(month_index: int) -> np.ndarray:
+            X_eval = embeddings[eval_idx, month_index, :]
+            if baseline_model is None:
+                return np.full(X_eval.shape[0], float(constant_prob), dtype=np.float32)
+            probs = baseline_model.predict_proba(X_eval)[:, 1]
+            return np.asarray(probs, dtype=np.float32)
+
+    else:
+        raise ValueError(f"Unsupported model_type: {config.model_type}")
+
     per_month: list[dict[str, float | int]] = []
     final_month_probs: np.ndarray | None = None
     final_month_preds: np.ndarray | None = None
     chosen_threshold = float(config.fixed_threshold)
     calibrate_first_mode = config.threshold_mode == "calibrate_first_eval"
     calibrate_each_mode = config.threshold_mode == "calibrate_each_month"
-    with torch.no_grad():
-        for month_index in range(config.train_months, n_months):
-            X_eval = embeddings[eval_idx, : month_index + 1, :]
-            logits = model(torch.from_numpy(X_eval))
-            probs = torch.sigmoid(logits).squeeze(1).cpu().numpy()
-            threshold_used = chosen_threshold
-            if calibrate_each_mode:
-                threshold_used = choose_threshold(y_eval, probs, config.calibration_metric)
-                chosen_threshold = threshold_used
-            elif calibrate_first_mode and month_index == config.train_months:
-                threshold_used = choose_threshold(y_eval, probs, config.calibration_metric)
-                chosen_threshold = threshold_used
-            preds = (probs >= threshold_used).astype(int)
-            tn = int(np.sum((preds == 0) & (y_eval == 0)))
-            fp = int(np.sum((preds == 1) & (y_eval == 0)))
-            fn = int(np.sum((preds == 0) & (y_eval == 1)))
-            tp = int(np.sum((preds == 1) & (y_eval == 1)))
-            month_metrics = _compute_binary_metrics(y_eval, preds)
-            confusion_metrics = _compute_confusion_metrics(tn=tn, fp=fp, fn=fn, tp=tp)
-            roc_auc: float | None = None
-            pr_auc: float | None = None
-            if np.unique(y_eval).size > 1:
-                roc_auc = float(roc_auc_score(y_eval, probs))
-                pr_auc = float(average_precision_score(y_eval, probs))
-            per_month.append(
-                {
-                    "month_index": int(month_index),
-                    "accuracy": month_metrics["accuracy"],
-                    "f1": month_metrics["f1"],
-                    "precision": confusion_metrics["precision"],
-                    "recall": confusion_metrics["recall"],
-                    "specificity": confusion_metrics["specificity"],
-                    "balanced_accuracy": confusion_metrics["balanced_accuracy"],
-                    "roc_auc": roc_auc,
-                    "pr_auc": pr_auc,
-                    "true_pos_rate": float(np.mean(y_eval)),
-                    "pred_pos_rate": float(np.mean(preds)),
-                    "mean_pred_prob": float(np.mean(probs)),
-                    "threshold_used": float(threshold_used),
-                    "tn": tn,
-                    "fp": fp,
-                    "fn": fn,
-                    "tp": tp,
-                }
-            )
-            final_month_probs = probs
-            final_month_preds = preds
+    for month_index in range(config.train_months, n_months):
+        probs = predict_probs(month_index)
+        threshold_used = chosen_threshold
+        if calibrate_each_mode:
+            threshold_used = choose_threshold(y_eval, probs, config.calibration_metric)
+            chosen_threshold = threshold_used
+        elif calibrate_first_mode and month_index == config.train_months:
+            threshold_used = choose_threshold(y_eval, probs, config.calibration_metric)
+            chosen_threshold = threshold_used
+        preds = (probs >= threshold_used).astype(int)
+        tn = int(np.sum((preds == 0) & (y_eval == 0)))
+        fp = int(np.sum((preds == 1) & (y_eval == 0)))
+        fn = int(np.sum((preds == 0) & (y_eval == 1)))
+        tp = int(np.sum((preds == 1) & (y_eval == 1)))
+        month_metrics = _compute_binary_metrics(y_eval, preds)
+        confusion_metrics = _compute_confusion_metrics(tn=tn, fp=fp, fn=fn, tp=tp)
+        roc_auc: float | None = None
+        pr_auc: float | None = None
+        if np.unique(y_eval).size > 1:
+            roc_auc = float(roc_auc_score(y_eval, probs))
+            pr_auc = float(average_precision_score(y_eval, probs))
+        per_month.append(
+            {
+                "month_index": int(month_index),
+                "accuracy": month_metrics["accuracy"],
+                "f1": month_metrics["f1"],
+                "precision": confusion_metrics["precision"],
+                "recall": confusion_metrics["recall"],
+                "specificity": confusion_metrics["specificity"],
+                "balanced_accuracy": confusion_metrics["balanced_accuracy"],
+                "roc_auc": roc_auc,
+                "pr_auc": pr_auc,
+                "true_pos_rate": float(np.mean(y_eval)),
+                "pred_pos_rate": float(np.mean(preds)),
+                "mean_pred_prob": float(np.mean(probs)),
+                "threshold_used": float(threshold_used),
+                "tn": tn,
+                "fp": fp,
+                "fn": fn,
+                "tp": tp,
+            }
+        )
+        final_month_probs = probs
+        final_month_preds = preds
 
     if not per_month:
         raise ValueError(
@@ -359,27 +529,11 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
     }
     final_month_threshold = float(per_month[-1]["threshold_used"])
     final_month_probs_list = [float(value) for value in final_month_probs.tolist()]
-
-    output_dir = ensure_dir(config.output_dir)
-    model_path = output_dir / "eval_temporal_model.pt"
     metrics_path = output_dir / "eval_temporal_metrics.json"
-
-    torch.save(
-        {
-            "state_dict": model.state_dict(),
-            "input_dim": input_dim,
-            "gru_hidden_dim": int(config.gru_hidden_dim),
-            "gru_layers": int(config.gru_layers),
-            "dropout": float(config.dropout),
-            "encoder_model": config.encoder_model,
-            "max_length": int(config.max_length),
-            "train_months": int(config.train_months),
-        },
-        model_path,
-    )
+    plot_paths = _save_eval_plots(per_month=per_month, output_dir=output_dir)
 
     metrics_payload = {
-        "model_type": "temporal_transformer_gru_eval",
+        "model_type": config.model_type,
         "input_path": str(data_path),
         "train_months": int(config.train_months),
         "months_total": int(n_months),
@@ -403,10 +557,12 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
         "n_authors_train": int(len(train_idx)),
         "n_authors_eval": int(len(eval_idx)),
         "model_path": str(model_path),
+        "plot_paths": plot_paths,
     }
     metrics_path.write_text(json.dumps(metrics_payload, indent=2), encoding="utf-8")
 
     return {
+        "model_type": config.model_type,
         "final_accuracy": float(final_month["accuracy"]),
         "final_f1": float(final_month["f1"]),
         "final_month_index": int(final_month["month_index"]),
@@ -426,4 +582,5 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
         "final_month_pred_rates": final_month_pred_rates,
         "final_month_confusion": final_month_confusion,
         "final_month_probs": final_month_probs_list,
+        "plot_paths": plot_paths,
     }

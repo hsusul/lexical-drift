@@ -153,6 +153,7 @@ def run_eval_temporal_sweep_with_inputs(
             record = {
                 "seed": int(seed),
                 "status": "ok",
+                "model_type": str(result["model_type"]),
                 "input_path": str(seed_data_path),
                 "output_dir": str(seed_output_dir),
                 "metrics_path": str(result["metrics_path"]),
@@ -188,6 +189,7 @@ def run_eval_temporal_sweep_with_inputs(
     return {
         "results_path": str(output_results),
         "records": records,
+        "model_type": config_template.model_type,
         **aggregate,
     }
 

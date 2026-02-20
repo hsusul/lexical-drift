@@ -98,6 +98,7 @@ def run_eval_temporal_compare(
         "months": int(months),
         "difficulty": difficulty,
         "summary_a": {
+            "model_type": str(result_a["model_type"]),
             "total_runs": int(result_a["total_runs"]),
             "success_count": int(result_a["success_count"]),
             "failure_count": int(result_a["failure_count"]),
@@ -108,6 +109,7 @@ def run_eval_temporal_compare(
             "results_path": str(result_a["results_path"]),
         },
         "summary_b": {
+            "model_type": str(result_b["model_type"]),
             "total_runs": int(result_b["total_runs"]),
             "success_count": int(result_b["success_count"]),
             "failure_count": int(result_b["failure_count"]),

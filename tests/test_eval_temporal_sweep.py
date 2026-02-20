@@ -77,6 +77,7 @@ def test_eval_temporal_sweep_runs_and_aggregates(tmp_path, monkeypatch) -> None:
     records = [json.loads(line) for line in lines]
     for record in records:
         assert record["status"] == "ok"
+        assert record["model_type"] == "gru"
         assert "seed" in record
         assert "final_month_index" in record
         assert "final_accuracy" in record
@@ -105,3 +106,8 @@ def test_eval_temporal_sweep_runs_and_aggregates(tmp_path, monkeypatch) -> None:
     assert isinstance(summary["final_month_summary"]["accuracy"], dict)
     assert isinstance(summary["all_eval_months_summary"]["f1"], dict)
     assert isinstance(summary["final_month_summary"]["balanced_accuracy"], dict)
+
+    run_dir = tmp_path / "artifacts" / "eval_sweep_runs" / "seed_1"
+    assert (run_dir / "per_month_metrics.png").exists()
+    assert (run_dir / "threshold_over_time.png").exists()
+    assert (run_dir / "pred_rate_over_time.png").exists()

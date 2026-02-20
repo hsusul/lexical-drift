@@ -65,6 +65,7 @@ class EvalTemporalConfig:
     dropout: float
     lr: float
     epochs: int
+    model_type: str = "gru"
     threshold_mode: str = "fixed"
     fixed_threshold: float = 0.5
     calibration_metric: str = "balanced_accuracy"
@@ -254,6 +255,7 @@ def load_eval_temporal_config(path: str | Path) -> EvalTemporalConfig:
         input_path=str(raw["input_path"]),
         output_dir=str(raw["output_dir"]),
         random_seed=int(raw["random_seed"]),
+        model_type=str(raw.get("model_type", "gru")),
         encoder_model=str(raw["encoder_model"]),
         max_length=int(raw["max_length"]),
         batch_size=int(raw["batch_size"]),
@@ -279,6 +281,8 @@ def load_eval_temporal_config(path: str | Path) -> EvalTemporalConfig:
         raise ValueError("batch_size must be > 0")
     if config.train_months < 1:
         raise ValueError("train_months must be >= 1")
+    if config.model_type not in {"gru", "baseline_lr"}:
+        raise ValueError("model_type must be one of: gru, baseline_lr")
     if config.gru_hidden_dim <= 0:
         raise ValueError("gru_hidden_dim must be > 0")
     if config.gru_layers <= 0:

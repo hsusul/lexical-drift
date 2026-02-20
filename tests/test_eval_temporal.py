@@ -90,6 +90,7 @@ def test_eval_temporal_per_month_metrics_and_cache(tmp_path, monkeypatch) -> Non
     assert [int(entry["month_index"]) for entry in per_month] == [3, 4, 5]
     assert bool(first["used_cache"]) is False
     assert bool(second["used_cache"]) is True
+    assert str(first["model_type"]) == "gru"
 
     metrics_path = Path(str(first["metrics_path"]))
     assert metrics_path.exists()
@@ -109,6 +110,12 @@ def test_eval_temporal_per_month_metrics_and_cache(tmp_path, monkeypatch) -> Non
     assert "final_month_confusion" in payload
     assert "cache_path" in payload
     assert "used_cache" in payload
+    assert "model_type" in payload
+    assert "plot_paths" in payload
+    plot_paths_payload = dict(payload["plot_paths"])
+    assert Path(str(plot_paths_payload["per_month_metrics_path"])).exists()
+    assert Path(str(plot_paths_payload["threshold_over_time_path"])).exists()
+    assert Path(str(plot_paths_payload["pred_rate_over_time_path"])).exists()
 
     for month_entry in payload["per_month"]:
         assert "month_index" in month_entry
@@ -149,6 +156,11 @@ def test_eval_temporal_per_month_metrics_and_cache(tmp_path, monkeypatch) -> Non
     assert isinstance(first["per_month"][0]["recall"], float)
     assert isinstance(first["per_month"][0]["specificity"], float)
     assert isinstance(first["per_month"][0]["balanced_accuracy"], float)
+    assert "plot_paths" in first
+    plot_paths = dict(first["plot_paths"])
+    assert Path(str(plot_paths["per_month_metrics_path"])).exists()
+    assert Path(str(plot_paths["threshold_over_time_path"])).exists()
+    assert Path(str(plot_paths["pred_rate_over_time_path"])).exists()
     assert first["per_month"][0]["roc_auc"] is None or isinstance(
         first["per_month"][0]["roc_auc"], float
     )
@@ -209,3 +221,50 @@ def test_eval_temporal_calibrate_each_month_thresholds(tmp_path, monkeypatch) ->
     payload = json.loads(metrics_path.read_text(encoding="utf-8"))
     assert "final_month_threshold" in payload
     assert float(payload["final_month_threshold"]) == pytest.approx(thresholds[-1])
+
+
+def test_eval_temporal_baseline_lr_and_plots(tmp_path, monkeypatch) -> None:
+    data_path = tmp_path / "synth_baseline.csv"
+    save_synthetic_dataset(
+        data_path,
+        n_authors=24,
+        months=6,
+        random_seed=19,
+        difficulty="hard",
+    )
+
+    monkeypatch.setattr(
+        eval_temporal,
+        "encode_texts_to_embeddings",
+        _fake_encode_texts_to_embeddings,
+    )
+
+    config = EvalTemporalConfig(
+        input_path=str(data_path),
+        output_dir=str(tmp_path / "artifacts_baseline"),
+        random_seed=19,
+        model_type="baseline_lr",
+        encoder_model="distilbert-base-uncased",
+        max_length=64,
+        batch_size=8,
+        cache_embeddings=True,
+        cache_dir=str(tmp_path / "cache_baseline"),
+        train_months=3,
+        gru_hidden_dim=16,
+        gru_layers=1,
+        dropout=0.1,
+        lr=0.001,
+        epochs=1,
+        test_size=0.25,
+    )
+
+    result = eval_temporal.run_eval_temporal(config)
+    assert str(result["model_type"]) == "baseline_lr"
+    model_path = Path(str(result["model_path"]))
+    assert model_path.suffix == ".joblib"
+    assert model_path.exists()
+
+    plot_paths = dict(result["plot_paths"])
+    assert Path(str(plot_paths["per_month_metrics_path"])).exists()
+    assert Path(str(plot_paths["threshold_over_time_path"])).exists()
+    assert Path(str(plot_paths["pred_rate_over_time_path"])).exists()
