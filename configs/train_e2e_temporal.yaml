@@ -1,0 +1,16 @@
+input_path: data/raw/synth.csv
+output_dir: artifacts/e2e
+random_seed: 42
+encoder_model: distilbert-base-uncased
+max_length: 128
+batch_size: 8
+train_months: 8
+gru_hidden_dim: 128
+gru_layers: 1
+dropout: 0.2
+lr: 0.0005
+epochs: 2
+test_size: 0.2
+pooling: cls
+freeze_encoder: false
+pretrained_encoder_path: ""

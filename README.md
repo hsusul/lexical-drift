@@ -71,6 +71,16 @@ lexdrift eval-temporal --config configs/eval_temporal.yaml
 lexdrift eval-temporal --config configs/eval_temporal_fixed.yaml
 ```
 
+## End-to-End Temporal Pipeline
+
+Train and evaluate a temporal GRU where encoder representations are produced directly in the
+training loop (no embedding cache):
+
+```bash
+lexdrift train-e2e --config configs/train_e2e_temporal.yaml
+lexdrift eval-e2e --config configs/eval_e2e_temporal.yaml
+```
+
 ## Benchmark
 
 Run repeated seed-based evaluation and compare baseline, NN, and temporal models:
@@ -135,6 +145,8 @@ lexdrift train-temporal --config configs/train_temporal.yaml
 lexdrift eval-temporal --config configs/eval_temporal.yaml
 lexdrift eval-temporal-sweep --seeds 1,2,3 --n-authors 80 --months 12
 lexdrift eval-temporal-compare --config-a configs/eval_temporal_fixed.yaml --config-b configs/eval_temporal_calib.yaml --seeds 1,2,3 --n-authors 50 --months 12 --difficulty hard
+lexdrift train-e2e --config configs/train_e2e_temporal.yaml
+lexdrift eval-e2e --config configs/eval_e2e_temporal.yaml
 lexdrift benchmark --seeds 1,2,3
 lexdrift predict --model artifacts/baseline.joblib --text "I keep using like filler words now"
 ```

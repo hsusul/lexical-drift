@@ -10,10 +10,12 @@ import numpy as np
 import typer
 
 from lexical_drift.config import (
+    load_eval_e2e_config,
     load_eval_temporal_config,
     load_nn_train_config,
     load_temporal_train_config,
     load_train_config,
+    load_train_e2e_config,
 )
 from lexical_drift.datasets.synthetic import save_synthetic_dataset
 from lexical_drift.inference.predict import predict_text
@@ -871,6 +873,66 @@ def render_report(
         out_path=out,
     )
     typer.echo(f"[render-report] wrote report to {output_path}")
+
+
+@app.command("train-e2e")
+def train_e2e(
+    config: Path = typer.Option(
+        Path("configs/train_e2e_temporal.yaml"),
+        help="Path to end-to-end temporal training config.",
+    ),
+) -> None:
+    has_torch = _dependency_available("torch")
+    has_transformers = _dependency_available("transformers")
+    if not has_torch or not has_transformers:
+        typer.echo("[train-e2e] skipping (torch and/or transformers not installed)")
+        return
+
+    from lexical_drift.train.e2e_temporal import run_train_e2e
+
+    train_config = load_train_e2e_config(config)
+    result = run_train_e2e(train_config)
+    typer.echo(
+        "[train-e2e] "
+        f"month={result['final_month_index']} "
+        f"accuracy={result['final_accuracy']:.4f} "
+        f"f1={result['final_f1']:.4f}"
+    )
+    typer.echo(f"[train-e2e] output_dir={result['output_dir']}")
+    typer.echo(f"[train-e2e] model={result['model_path']}")
+    typer.echo(f"[train-e2e] metrics={result['metrics_path']}")
+    typer.echo(f"[train-e2e] per-month-csv={result['per_month_csv_path']}")
+    typer.echo(f"[train-e2e] metadata={result['run_metadata_path']}")
+
+
+@app.command("eval-e2e")
+def eval_e2e(
+    config: Path = typer.Option(
+        Path("configs/eval_e2e_temporal.yaml"),
+        help="Path to end-to-end temporal evaluation config.",
+    ),
+) -> None:
+    has_torch = _dependency_available("torch")
+    has_transformers = _dependency_available("transformers")
+    if not has_torch or not has_transformers:
+        typer.echo("[eval-e2e] skipping (torch and/or transformers not installed)")
+        return
+
+    from lexical_drift.train.e2e_temporal import run_eval_e2e
+
+    eval_config = load_eval_e2e_config(config)
+    result = run_eval_e2e(eval_config)
+    typer.echo(
+        "[eval-e2e] "
+        f"month={result['final_month_index']} "
+        f"accuracy={result['final_accuracy']:.4f} "
+        f"f1={result['final_f1']:.4f}"
+    )
+    typer.echo(f"[eval-e2e] output_dir={result['output_dir']}")
+    typer.echo(f"[eval-e2e] model={result['model_path']}")
+    typer.echo(f"[eval-e2e] metrics={result['metrics_path']}")
+    typer.echo(f"[eval-e2e] per-month-csv={result['per_month_csv_path']}")
+    typer.echo(f"[eval-e2e] metadata={result['run_metadata_path']}")
 
 
 @app.command("benchmark")
