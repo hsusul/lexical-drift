@@ -24,12 +24,8 @@ artifacts/*
 
 # Local data outputs (keep folder structure)
 data/raw/*.csv
+!data/raw/real_sample.csv
 data/processed/*.csv
 
 # OS
 .DS_Store
-
-
-# Local outputs
-artifacts/
-data/

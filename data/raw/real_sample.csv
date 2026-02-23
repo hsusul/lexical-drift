@@ -1,0 +1,25 @@
+author_id,month,text,label
+a0,0,"I wrote a detailed update with clear structure and examples.",0
+a0,1,"I shared another project note with concrete details and balanced tone.",0
+a0,2,"I drafted a summary with normal vocabulary and medium sentence length.",0
+a0,3,"I posted a weekly recap and added a few clarifying points.",0
+a0,4,"I prepared a concise review with references to prior work.",0
+a0,5,"I published a short reflection with consistent writing style.",0
+a1,0,"The report discussed planned milestones and practical constraints.",0
+a1,1,"This month I described progress and linked related observations.",0
+a1,2,"I noted small changes in process and moderate writing variation.",0
+a1,3,"I wrote a normal status message with ordinary vocabulary.",0
+a1,4,"I summarized deliverables and mentioned open follow-up tasks.",0
+a1,5,"I closed with a clean overview and straightforward wording.",0
+b0,0,"I wrote long comments with varied words and detailed context.",1
+b0,1,"I still used broad vocabulary and multi-clause explanations.",1
+b0,2,"I began to shorten phrasing and repeated a few filler words.",1
+b0,3,"I wrote brief notes and used like like simple fillers.",1
+b0,4,"I posted short lines and repeated tokens with less variety.",1
+b0,5,"I sent tiny updates with filler words and simple repeated phrasing.",1
+b1,0,"Initial entries were richer with specific nouns and long clauses.",1
+b1,1,"The second month remained descriptive with relatively diverse wording.",1
+b1,2,"Later I shortened sentences and reused some common terms.",1
+b1,3,"Now notes were shorter and had more filler style language.",1
+b1,4,"Messages stayed compact and repeated simple token patterns.",1
+b1,5,"Final updates were brief and relied on repeated easy words.",1

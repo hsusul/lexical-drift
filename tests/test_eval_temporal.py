@@ -112,11 +112,18 @@ def test_eval_temporal_per_month_metrics_and_cache(tmp_path, monkeypatch) -> Non
     assert "used_cache" in payload
     assert "model_type" in payload
     assert "plot_paths" in payload
+    assert "per_month_csv_path" in payload
+    assert "git_commit_hash" in payload
+    assert "timestamp_iso" in payload
+    assert "dataset_hash" in payload
+    assert "config_hash" in payload
     plot_paths_payload = dict(payload["plot_paths"])
     assert Path(str(plot_paths_payload["per_month_metrics_path"])).exists()
     assert Path(str(plot_paths_payload["threshold_over_time_path"])).exists()
     assert Path(str(plot_paths_payload["pred_rate_over_time_path"])).exists()
     assert Path(str(plot_paths_payload["embedding_drift_over_time_path"])).exists()
+    assert Path(str(plot_paths_payload["drift_vs_accuracy_delta_path"])).exists()
+    assert Path(str(payload["per_month_csv_path"])).exists()
 
     for month_entry in payload["per_month"]:
         assert "month_index" in month_entry
@@ -139,6 +146,8 @@ def test_eval_temporal_per_month_metrics_and_cache(tmp_path, monkeypatch) -> Non
         assert "cosine_drift" in month_entry
         assert "l2_drift" in month_entry
         assert "variance_shift" in month_entry
+        assert "accuracy_delta_from_ref" in month_entry
+        assert "f1_delta_from_ref" in month_entry
         roc_auc = month_entry["roc_auc"]
         pr_auc = month_entry["pr_auc"]
         assert roc_auc is None or isinstance(roc_auc, float)
@@ -146,12 +155,19 @@ def test_eval_temporal_per_month_metrics_and_cache(tmp_path, monkeypatch) -> Non
         assert isinstance(month_entry["cosine_drift"], float)
         assert isinstance(month_entry["l2_drift"], float)
         assert isinstance(month_entry["variance_shift"], float)
+        assert isinstance(month_entry["accuracy_delta_from_ref"], float)
+        assert isinstance(month_entry["f1_delta_from_ref"], float)
 
     json.dumps(payload)
     json.dumps(first)
+    assert Path(str(first["per_month_csv_path"])).exists()
     assert isinstance(first["final_month_probs"], list)
     assert isinstance(first["final_month_pred_counts"]["pred_0"], int)
     assert isinstance(first["final_month_confusion"]["tp"], int)
+    assert isinstance(first["git_commit_hash"], str)
+    assert isinstance(first["timestamp_iso"], str)
+    assert isinstance(first["dataset_hash"], str)
+    assert isinstance(first["config_hash"], str)
     assert isinstance(first["per_month_summary"]["accuracy_min"], float)
     assert isinstance(first["chosen_threshold"], float)
     assert isinstance(first["calibration_metric"], str)
@@ -169,6 +185,7 @@ def test_eval_temporal_per_month_metrics_and_cache(tmp_path, monkeypatch) -> Non
     assert Path(str(plot_paths["threshold_over_time_path"])).exists()
     assert Path(str(plot_paths["pred_rate_over_time_path"])).exists()
     assert Path(str(plot_paths["embedding_drift_over_time_path"])).exists()
+    assert Path(str(plot_paths["drift_vs_accuracy_delta_path"])).exists()
     assert first["per_month"][0]["roc_auc"] is None or isinstance(
         first["per_month"][0]["roc_auc"], float
     )
@@ -178,6 +195,8 @@ def test_eval_temporal_per_month_metrics_and_cache(tmp_path, monkeypatch) -> Non
     assert isinstance(first["per_month"][0]["cosine_drift"], float)
     assert isinstance(first["per_month"][0]["l2_drift"], float)
     assert isinstance(first["per_month"][0]["variance_shift"], float)
+    assert first["per_month"][0]["accuracy_delta_from_ref"] == pytest.approx(0.0)
+    assert first["per_month"][0]["f1_delta_from_ref"] == pytest.approx(0.0)
 
     changed = eval_temporal.run_eval_temporal(replace(config, max_length=96))
     assert bool(changed["used_cache"]) is False
@@ -280,3 +299,49 @@ def test_eval_temporal_baseline_lr_and_plots(tmp_path, monkeypatch) -> None:
     assert Path(str(plot_paths["threshold_over_time_path"])).exists()
     assert Path(str(plot_paths["pred_rate_over_time_path"])).exists()
     assert Path(str(plot_paths["embedding_drift_over_time_path"])).exists()
+    assert Path(str(plot_paths["drift_vs_accuracy_delta_path"])).exists()
+
+
+def test_eval_temporal_attention_model(tmp_path, monkeypatch) -> None:
+    pytest.importorskip("torch")
+
+    data_path = tmp_path / "synth_attention.csv"
+    save_synthetic_dataset(
+        data_path,
+        n_authors=24,
+        months=6,
+        random_seed=23,
+        difficulty="hard",
+    )
+    monkeypatch.setattr(
+        eval_temporal,
+        "encode_texts_to_embeddings",
+        _fake_encode_texts_to_embeddings,
+    )
+
+    config = EvalTemporalConfig(
+        input_path=str(data_path),
+        output_dir=str(tmp_path / "artifacts_attention"),
+        random_seed=23,
+        model_type="attention",
+        encoder_model="distilbert-base-uncased",
+        max_length=64,
+        batch_size=8,
+        cache_embeddings=True,
+        cache_dir=str(tmp_path / "cache_attention"),
+        train_months=3,
+        gru_hidden_dim=16,
+        gru_layers=1,
+        dropout=0.1,
+        lr=0.001,
+        epochs=1,
+        test_size=0.25,
+    )
+
+    result = eval_temporal.run_eval_temporal(config)
+    assert str(result["model_type"]) == "attention"
+    model_path = Path(str(result["model_path"]))
+    assert model_path.exists()
+    assert model_path.suffix == ".pt"
+    assert isinstance(result["final_accuracy"], float)
+    assert isinstance(result["final_f1"], float)

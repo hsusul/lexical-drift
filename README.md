@@ -57,11 +57,14 @@ tool**.
 `EvalTemporalConfig.model_type` supports:
 - `gru` (default): temporal GRU classifier over monthly embedding prefixes.
 - `baseline_lr`: non-temporal logistic regression baseline on month embeddings.
+- `attention`: temporal self-attention encoder with positional embeddings.
 
 Each `eval-temporal` run writes these plot artifacts into that run's `output_dir`:
 - `per_month_metrics.png`
 - `threshold_over_time.png`
 - `pred_rate_over_time.png`
+- `embedding_drift_over_time.png`
+- `drift_vs_accuracy_delta.png`
 
 ```bash
 lexdrift eval-temporal --config configs/eval_temporal.yaml
@@ -101,6 +104,25 @@ lexdrift eval-temporal-compare \
   --n-authors 50 \
   --months 12 \
   --difficulty hard
+```
+
+## Report Rendering
+
+Generate a markdown report from compare results:
+
+```bash
+lexdrift render-report \
+  --compare-summary artifacts/eval_temporal_compare_summary.json \
+  --out docs/report.md
+```
+
+## Dashboard
+
+Optional Streamlit dashboard for browsing sweep and compare outputs:
+
+```bash
+pip install -e ".[dev,viz]"
+streamlit run apps/dashboard/app.py
 ```
 
 ## CLI

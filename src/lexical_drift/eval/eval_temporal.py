@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 
 import joblib
@@ -18,6 +19,7 @@ from lexical_drift.datasets.temporal import build_author_sequences_with_months
 from lexical_drift.features.encoder import encode_texts_to_embeddings
 from lexical_drift.training.train_temporal import compute_cache_fingerprint
 from lexical_drift.utils import ensure_dir
+from lexical_drift.utils.metadata import config_sha256, file_sha256, git_commit_hash
 
 REQUIRED_COLUMNS = {"author_id", "month_index", "text", "drift_label"}
 
@@ -272,11 +274,35 @@ def _save_eval_plots(
     fig.savefig(drift_path, dpi=150)
     plt.close(fig)
 
+    drift_vs_accuracy_delta_path = output_dir / "drift_vs_accuracy_delta.png"
+    fig, ax = plt.subplots(figsize=(8, 4))
+    accuracy_delta = _series_from_per_month(per_month, "accuracy_delta_from_ref")
+    for metric_name in ("cosine_drift", "l2_drift", "variance_shift"):
+        drift_values = _series_from_per_month(per_month, metric_name)
+        if np.isnan(drift_values).all() or np.isnan(accuracy_delta).all():
+            continue
+        ax.plot(
+            accuracy_delta,
+            drift_values,
+            marker="o",
+            linestyle="-",
+            label=metric_name,
+        )
+    ax.set_xlabel("accuracy_delta_from_ref")
+    ax.set_ylabel("drift")
+    ax.set_title("Embedding drift vs accuracy delta")
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(loc="best")
+    fig.tight_layout()
+    fig.savefig(drift_vs_accuracy_delta_path, dpi=150)
+    plt.close(fig)
+
     return {
         "per_month_metrics_path": str(per_month_metrics_path),
         "threshold_over_time_path": str(threshold_path),
         "pred_rate_over_time_path": str(pred_rate_path),
         "embedding_drift_over_time_path": str(drift_path),
+        "drift_vs_accuracy_delta_path": str(drift_vs_accuracy_delta_path),
     }
 
 
@@ -358,9 +384,12 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
     y_eval = labels[eval_idx].astype(int)
     output_dir = ensure_dir(config.output_dir)
 
-    if config.model_type == "gru":
+    if config.model_type in {"gru", "attention"}:
         torch, DataLoader, TensorDataset = _import_torch_modules()
-        from lexical_drift.models.temporal_gru import build_temporal_gru
+        if config.model_type == "gru":
+            from lexical_drift.models.temporal_gru import build_temporal_gru
+        else:
+            from lexical_drift.models.temporal_attention import build_temporal_attention
 
         torch.manual_seed(config.random_seed)
         X_train = embeddings[train_idx, : config.train_months, :]
@@ -378,12 +407,22 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
             generator=train_generator,
         )
 
-        model = build_temporal_gru(
-            input_dim=input_dim,
-            hidden_dim=config.gru_hidden_dim,
-            layers=config.gru_layers,
-            dropout=config.dropout,
-        )
+        if config.model_type == "gru":
+            model = build_temporal_gru(
+                input_dim=input_dim,
+                hidden_dim=config.gru_hidden_dim,
+                layers=config.gru_layers,
+                dropout=config.dropout,
+            )
+        else:
+            model = build_temporal_attention(
+                input_dim=input_dim,
+                hidden_dim=config.gru_hidden_dim,
+                max_positions=n_months,
+                layers=max(int(config.gru_layers), 1),
+                heads=4,
+                dropout=config.dropout,
+            )
         optimizer = torch.optim.Adam(model.parameters(), lr=config.lr)
         criterion = torch.nn.BCEWithLogitsLoss()
 
@@ -406,20 +445,22 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
 
         model.eval()
         model_path = output_dir / "eval_temporal_model.pt"
-        torch.save(
-            {
-                "state_dict": model.state_dict(),
-                "input_dim": input_dim,
-                "gru_hidden_dim": int(config.gru_hidden_dim),
-                "gru_layers": int(config.gru_layers),
-                "dropout": float(config.dropout),
-                "encoder_model": config.encoder_model,
-                "max_length": int(config.max_length),
-                "train_months": int(config.train_months),
-                "model_type": config.model_type,
-            },
-            model_path,
-        )
+        model_payload: dict[str, object] = {
+            "state_dict": model.state_dict(),
+            "input_dim": input_dim,
+            "gru_hidden_dim": int(config.gru_hidden_dim),
+            "gru_layers": int(config.gru_layers),
+            "dropout": float(config.dropout),
+            "encoder_model": config.encoder_model,
+            "max_length": int(config.max_length),
+            "train_months": int(config.train_months),
+            "model_type": config.model_type,
+        }
+        if config.model_type == "attention":
+            model_payload["attention_layers"] = int(max(config.gru_layers, 1))
+            model_payload["attention_heads"] = 4
+            model_payload["max_positions"] = int(n_months)
+        torch.save(model_payload, model_path)
 
         def predict_probs(month_index: int) -> np.ndarray:
             with torch.no_grad():
@@ -550,6 +591,13 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
     if final_month_probs is None or final_month_preds is None:
         raise ValueError("Failed to compute final month predictions")
 
+    # Reference is first evaluation month (month_index=train_months).
+    reference_accuracy = float(per_month[0]["accuracy"])
+    reference_f1 = float(per_month[0]["f1"])
+    for entry in per_month:
+        entry["accuracy_delta_from_ref"] = float(entry["accuracy"]) - reference_accuracy
+        entry["f1_delta_from_ref"] = float(entry["f1"]) - reference_f1
+
     final_month = per_month[-1]
     accuracy_values = np.asarray(
         [float(entry["accuracy"]) for entry in per_month], dtype=np.float64
@@ -563,6 +611,12 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
     )
     variance_shift_values = np.asarray(
         [float(entry["variance_shift"]) for entry in per_month], dtype=np.float64
+    )
+    accuracy_delta_values = np.asarray(
+        [float(entry["accuracy_delta_from_ref"]) for entry in per_month], dtype=np.float64
+    )
+    f1_delta_values = np.asarray(
+        [float(entry["f1_delta_from_ref"]) for entry in per_month], dtype=np.float64
     )
     per_month_summary = {
         "accuracy_min": float(accuracy_values.min()),
@@ -580,6 +634,12 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
         "variance_shift_min": float(variance_shift_values.min()),
         "variance_shift_mean": float(variance_shift_values.mean()),
         "variance_shift_max": float(variance_shift_values.max()),
+        "accuracy_delta_from_ref_min": float(accuracy_delta_values.min()),
+        "accuracy_delta_from_ref_mean": float(accuracy_delta_values.mean()),
+        "accuracy_delta_from_ref_max": float(accuracy_delta_values.max()),
+        "f1_delta_from_ref_min": float(f1_delta_values.min()),
+        "f1_delta_from_ref_mean": float(f1_delta_values.mean()),
+        "f1_delta_from_ref_max": float(f1_delta_values.max()),
     }
     summary = {
         "accuracy_mean": float(accuracy_values.mean()),
@@ -592,6 +652,10 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
         "l2_drift_std": float(l2_drift_values.std()),
         "variance_shift_mean": float(variance_shift_values.mean()),
         "variance_shift_std": float(variance_shift_values.std()),
+        "accuracy_delta_from_ref_mean": float(accuracy_delta_values.mean()),
+        "accuracy_delta_from_ref_std": float(accuracy_delta_values.std()),
+        "f1_delta_from_ref_mean": float(f1_delta_values.mean()),
+        "f1_delta_from_ref_std": float(f1_delta_values.std()),
     }
     tp = int(np.sum((final_month_preds == 1) & (y_eval == 1)))
     fp = int(np.sum((final_month_preds == 1) & (y_eval == 0)))
@@ -610,11 +674,21 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
     final_month_threshold = float(per_month[-1]["threshold_used"])
     final_month_probs_list = [float(value) for value in final_month_probs.tolist()]
     metrics_path = output_dir / "eval_temporal_metrics.json"
+    per_month_csv_path = output_dir / "per_month_metrics.csv"
+    pd.DataFrame(per_month).to_csv(per_month_csv_path, index=False)
     plot_paths = _save_eval_plots(per_month=per_month, output_dir=output_dir)
+    dataset_hash = file_sha256(data_path)
+    config_hash = config_sha256(config)
+    commit_hash = git_commit_hash()
+    timestamp_iso = datetime.now(UTC).isoformat()
 
     metrics_payload = {
         "model_type": config.model_type,
         "input_path": str(data_path),
+        "git_commit_hash": commit_hash,
+        "timestamp_iso": timestamp_iso,
+        "dataset_hash": dataset_hash,
+        "config_hash": config_hash,
         "train_months": int(config.train_months),
         "months_total": int(n_months),
         "per_month": per_month,
@@ -637,6 +711,7 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
         "n_authors_train": int(len(train_idx)),
         "n_authors_eval": int(len(eval_idx)),
         "model_path": str(model_path),
+        "per_month_csv_path": str(per_month_csv_path),
         "plot_paths": plot_paths,
     }
     metrics_path.write_text(json.dumps(metrics_payload, indent=2), encoding="utf-8")
@@ -650,6 +725,10 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
         "model_path": str(model_path),
         "cache_path": str(cache_path) if config.cache_embeddings else "",
         "cache_fingerprint": cache_fingerprint,
+        "git_commit_hash": commit_hash,
+        "timestamp_iso": timestamp_iso,
+        "dataset_hash": dataset_hash,
+        "config_hash": config_hash,
         "used_cache": bool(used_cache),
         "threshold_mode": config.threshold_mode,
         "fixed_threshold": float(config.fixed_threshold),
@@ -663,4 +742,5 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
         "final_month_confusion": final_month_confusion,
         "final_month_probs": final_month_probs_list,
         "plot_paths": plot_paths,
+        "per_month_csv_path": str(per_month_csv_path),
     }

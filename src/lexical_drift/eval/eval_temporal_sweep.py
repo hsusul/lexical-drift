@@ -5,6 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 from lexical_drift.config import EvalTemporalConfig
 from lexical_drift.datasets.synthetic import save_synthetic_dataset
@@ -26,6 +27,8 @@ SUMMARY_METRICS = (
     "cosine_drift",
     "l2_drift",
     "variance_shift",
+    "accuracy_delta_from_ref",
+    "f1_delta_from_ref",
 )
 
 
@@ -115,6 +118,35 @@ def aggregate_sweep_metrics(records: list[dict[str, object]]) -> dict[str, objec
     }
 
 
+def _write_sweep_records_csv(path: Path, records: list[dict[str, object]]) -> None:
+    rows: list[dict[str, object]] = []
+    for record in records:
+        rows.append(
+            {
+                "seed": record.get("seed"),
+                "status": record.get("status"),
+                "model_type": record.get("model_type"),
+                "final_month_index": record.get("final_month_index"),
+                "final_accuracy": record.get("final_accuracy"),
+                "final_f1": record.get("final_f1"),
+                "final_roc_auc": record.get("final_roc_auc"),
+                "final_pr_auc": record.get("final_pr_auc"),
+                "chosen_threshold": record.get("chosen_threshold"),
+                "final_month_threshold": record.get("final_month_threshold"),
+                "cache_fingerprint": record.get("cache_fingerprint"),
+                "used_cache": record.get("used_cache"),
+                "git_commit_hash": record.get("git_commit_hash"),
+                "timestamp_iso": record.get("timestamp_iso"),
+                "dataset_hash": record.get("dataset_hash"),
+                "config_hash": record.get("config_hash"),
+                "metrics_path": record.get("metrics_path"),
+                "model_path": record.get("model_path"),
+                "output_dir": record.get("output_dir"),
+            }
+        )
+    pd.DataFrame(rows).to_csv(path, index=False)
+
+
 def run_eval_temporal_sweep_with_inputs(
     *,
     config_template: EvalTemporalConfig,
@@ -178,6 +210,10 @@ def run_eval_temporal_sweep_with_inputs(
                 "final_month_threshold": float(result["final_month_threshold"]),
                 "thresholds": thresholds,
                 "cache_fingerprint": str(result["cache_fingerprint"]),
+                "git_commit_hash": str(result["git_commit_hash"]),
+                "timestamp_iso": str(result["timestamp_iso"]),
+                "dataset_hash": str(result["dataset_hash"]),
+                "config_hash": str(result["config_hash"]),
                 "used_cache": bool(result["used_cache"]),
             }
         except Exception as exc:  # pragma: no cover - failure path validated indirectly in summary
@@ -193,8 +229,11 @@ def run_eval_temporal_sweep_with_inputs(
         records.append(record)
 
     aggregate = aggregate_sweep_metrics(records)
+    sweep_records_csv_path = output_root / "sweep_records.csv"
+    _write_sweep_records_csv(sweep_records_csv_path, records)
     return {
         "results_path": str(output_results),
+        "sweep_records_csv_path": str(sweep_records_csv_path),
         "records": records,
         "model_type": config_template.model_type,
         **aggregate,

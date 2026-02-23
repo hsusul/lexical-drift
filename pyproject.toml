@@ -32,6 +32,9 @@ dl = [
 nlp = [
   "transformers>=4.40",
 ]
+viz = [
+  "streamlit",
+]
 
 [project.scripts]
 lexdrift = "lexical_drift.cli:app"

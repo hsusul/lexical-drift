@@ -44,6 +44,20 @@ def _resolve_seed_list(
     return list(range(start_seed, start_seed + n_seeds))
 
 
+def _parse_int_list(raw: str, *, name: str) -> list[int]:
+    values = [int(part.strip()) for part in raw.split(",") if part.strip()]
+    if not values:
+        raise ValueError(f"No valid values provided via --{name}")
+    return values
+
+
+def _parse_str_list(raw: str, *, name: str) -> list[str]:
+    values = [part.strip() for part in raw.split(",") if part.strip()]
+    if not values:
+        raise ValueError(f"No valid values provided via --{name}")
+    return values
+
+
 def _append_jsonl(path: Path, record: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
@@ -93,6 +107,8 @@ def _print_metric_summary(
         "cosine_drift",
         "l2_drift",
         "variance_shift",
+        "accuracy_delta_from_ref",
+        "f1_delta_from_ref",
     ):
         text = _format_summary_stats(summary.get(metric))
         typer.echo(f"{prefix}   {metric:>13} {text}")
@@ -129,8 +145,95 @@ def _print_metric_delta(
         "cosine_drift",
         "l2_drift",
         "variance_shift",
+        "accuracy_delta_from_ref",
+        "f1_delta_from_ref",
     ):
         typer.echo(f"{prefix}   {metric:>13} {_format_delta(delta.get(metric))}")
+
+
+def _print_metric_significance(
+    title: str,
+    stats_payload: object,
+    *,
+    prefix: str = "[eval-temporal-compare]",
+) -> None:
+    typer.echo(f"{prefix} {title}")
+    if not isinstance(stats_payload, dict):
+        typer.echo(f"{prefix}   no data")
+        return
+    for metric in (
+        "accuracy",
+        "f1",
+        "precision",
+        "recall",
+        "specificity",
+        "balanced_accuracy",
+        "roc_auc",
+        "pr_auc",
+        "pred_pos_rate",
+        "true_pos_rate",
+        "threshold_used",
+        "cosine_drift",
+        "l2_drift",
+        "variance_shift",
+        "accuracy_delta_from_ref",
+        "f1_delta_from_ref",
+    ):
+        raw = stats_payload.get(metric)
+        if not isinstance(raw, dict):
+            typer.echo(f"{prefix}   {metric:>13} no paired stats")
+            continue
+        n_value = int(raw.get("n", 0))
+        mean_delta = raw.get("mean_delta")
+        ci_low = raw.get("ci_low")
+        ci_high = raw.get("ci_high")
+        p_value = raw.get("p_value")
+        t_stat = raw.get("t_stat")
+        if mean_delta is None or ci_low is None or ci_high is None:
+            typer.echo(f"{prefix}   {metric:>13} no paired stats")
+            continue
+        p_text = "na" if p_value is None else f"{float(p_value):.4g}"
+        t_text = "na" if t_stat is None else f"{float(t_stat):+.4f}"
+        typer.echo(
+            f"{prefix}   {metric:>13} "
+            f"delta={float(mean_delta):+.4f} "
+            f"ci95=[{float(ci_low):+.4f},{float(ci_high):+.4f}] "
+            f"t={t_text} p={p_text} n={n_value}"
+        )
+
+
+def _print_drift_correlation_summary(
+    title: str,
+    correlation_payload: object,
+    *,
+    prefix: str = "[eval-temporal-compare]",
+) -> None:
+    typer.echo(f"{prefix} {title}")
+    if not isinstance(correlation_payload, dict):
+        typer.echo(f"{prefix}   no correlation data")
+        return
+    summary = correlation_payload.get("summary")
+    if not isinstance(summary, dict):
+        typer.echo(f"{prefix}   no correlation data")
+        return
+    for pair_key in (
+        "cosine_drift__accuracy_delta_from_ref",
+        "l2_drift__accuracy_delta_from_ref",
+        "variance_shift__accuracy_delta_from_ref",
+        "cosine_drift__f1_delta_from_ref",
+        "l2_drift__f1_delta_from_ref",
+        "variance_shift__f1_delta_from_ref",
+    ):
+        stats = summary.get(pair_key)
+        if not isinstance(stats, dict):
+            typer.echo(f"{prefix}   {pair_key:>36} no data")
+            continue
+        typer.echo(
+            f"{prefix}   {pair_key:>36} "
+            f"mean={float(stats['mean']):+.4f} "
+            f"std={float(stats['std']):.4f} "
+            f"n={int(stats['n'])}"
+        )
 
 
 @app.command("generate-synth")
@@ -350,6 +453,15 @@ def eval_temporal(
             f"{float(row['l2_drift']):>8.4f} "
             f"{float(row['variance_shift']):>9.4f}"
         )
+    typer.echo("[eval-temporal] month  acc_delta f1_delta")
+    for entry in result["per_month"]:
+        row = dict(entry)
+        typer.echo(
+            "[eval-temporal] "
+            f"{int(row['month_index']):>5d} "
+            f"{float(row['accuracy_delta_from_ref']):>9.4f} "
+            f"{float(row['f1_delta_from_ref']):>8.4f}"
+        )
     typer.echo(
         "[eval-temporal] final confusion "
         f"tp={confusion['tp']} fp={confusion['fp']} "
@@ -362,9 +474,59 @@ def eval_temporal(
         f"(counts: pred_0={pred_counts['pred_0']}, pred_1={pred_counts['pred_1']})"
     )
     typer.echo(f"[eval-temporal] metrics={result['metrics_path']}")
+    typer.echo(f"[eval-temporal] per-month-csv={result['per_month_csv_path']}")
     typer.echo(f"[eval-temporal] model={result['model_path']}")
     if result["cache_path"]:
         typer.echo(f"[eval-temporal] cache={result['cache_path']}")
+
+
+@app.command("eval-temporal-real")
+def eval_temporal_real(
+    dataset: str = typer.Option(
+        "sample_local",
+        help="Real dataset loader name (currently: sample_local).",
+    ),
+    path: Path = typer.Option(
+        Path("data/raw/real_sample.csv"),
+        help="Path to local real dataset CSV.",
+    ),
+    config: Path = typer.Option(
+        Path("configs/eval_temporal.yaml"),
+        help="Path to temporal evaluation config.",
+    ),
+) -> None:
+    has_transformers = _dependency_available("transformers")
+    if not has_transformers:
+        typer.echo("[eval-temporal-real] skipping (transformers not installed)")
+        return
+
+    from lexical_drift.datasets.real import load_real_dataset
+    from lexical_drift.eval.eval_temporal import run_eval_temporal
+
+    eval_config = load_eval_temporal_config(config)
+    if eval_config.model_type in {"gru", "attention"} and not _dependency_available("torch"):
+        typer.echo("[eval-temporal-real] skipping (torch not installed for temporal model_type)")
+        return
+
+    normalized = load_real_dataset(name=dataset, path=path)
+    output_dir = Path(eval_config.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    normalized_path = output_dir / "real_dataset_prepared.csv"
+    normalized.to_csv(normalized_path, index=False)
+    typer.echo(f"[eval-temporal-real] prepared dataset={normalized_path}")
+
+    run_config = replace(eval_config, input_path=str(normalized_path))
+    result = run_eval_temporal(run_config)
+    typer.echo(
+        "[eval-temporal-real] "
+        f"month={result['final_month_index']} "
+        f"accuracy={result['final_accuracy']:.4f} "
+        f"f1={result['final_f1']:.4f}"
+    )
+    typer.echo(f"[eval-temporal-real] metrics={result['metrics_path']}")
+    typer.echo(f"[eval-temporal-real] model={result['model_path']}")
+    if result["cache_path"]:
+        typer.echo(f"[eval-temporal-real] cache={result['cache_path']}")
 
 
 @app.command("eval-temporal-sweep")
@@ -419,6 +581,7 @@ def eval_temporal_sweep(
     )
 
     typer.echo(f"[eval-temporal-sweep] results={result['results_path']}")
+    typer.echo(f"[eval-temporal-sweep] records-csv={result['sweep_records_csv_path']}")
     typer.echo(f"[eval-temporal-sweep] model_type={result['model_type']}")
     typer.echo(
         "[eval-temporal-sweep] "
@@ -495,6 +658,7 @@ def eval_temporal_compare(
     summary_a = dict(result["summary_a"])
     summary_b = dict(result["summary_b"])
     typer.echo(f"[eval-temporal-compare] summary={result['summary_path']}")
+    typer.echo(f"[eval-temporal-compare] seed-deltas-csv={result['compare_seed_deltas_csv_path']}")
     typer.echo(
         "[eval-temporal-compare] "
         f"A model_type={summary_a['model_type']} "
@@ -527,6 +691,11 @@ def eval_temporal_compare(
         result["final_month_delta"],
         prefix="[eval-temporal-compare]",
     )
+    _print_metric_significance(
+        "SIGNIFICANCE FINAL MONTH (paired B-A)",
+        result["final_month_stats"],
+        prefix="[eval-temporal-compare]",
+    )
 
     _print_metric_summary(
         "A ALL EVAL MONTHS: metric mean±std (min..max)",
@@ -543,6 +712,163 @@ def eval_temporal_compare(
         result["all_months_delta"],
         prefix="[eval-temporal-compare]",
     )
+    _print_metric_significance(
+        "SIGNIFICANCE ALL EVAL MONTHS (paired B-A)",
+        result["all_months_stats"],
+        prefix="[eval-temporal-compare]",
+    )
+    _print_drift_correlation_summary(
+        "A DRIFT/PERF CORRELATION (per-seed summary)",
+        result["drift_performance_correlation_a"],
+        prefix="[eval-temporal-compare]",
+    )
+    _print_drift_correlation_summary(
+        "B DRIFT/PERF CORRELATION (per-seed summary)",
+        result["drift_performance_correlation_b"],
+        prefix="[eval-temporal-compare]",
+    )
+
+
+@app.command("ablation-train-months")
+def ablation_train_months(
+    config: Path = typer.Option(
+        Path("configs/eval_temporal.yaml"),
+        help="Path to temporal evaluation config template.",
+    ),
+    train_months: str = typer.Option(
+        "3,6,9",
+        help="Comma-separated train_months values (e.g. 3,6,9).",
+    ),
+    seeds: str = typer.Option(
+        "",
+        help="Comma-separated seeds (e.g. 1,2,3). Overrides --n-seeds/--start-seed.",
+    ),
+    n_seeds: int = typer.Option(3, min=1, help="Number of sequential seeds to run."),
+    start_seed: int = typer.Option(1, help="Starting seed when --seeds is not provided."),
+    n_authors: int = typer.Option(50, min=1, help="Synthetic authors per seed."),
+    months: int = typer.Option(12, min=2, help="Synthetic months per author."),
+    difficulty: Difficulty = typer.Option(
+        Difficulty.hard,
+        help="Synthetic generation preset difficulty.",
+    ),
+    artifact_root: Path = typer.Option(
+        Path("artifacts"),
+        help="Root directory for ablation outputs.",
+    ),
+) -> None:
+    has_torch = _dependency_available("torch")
+    has_transformers = _dependency_available("transformers")
+    if not has_torch or not has_transformers:
+        typer.echo("[ablation-train-months] skipping (torch and/or transformers not installed)")
+        return
+
+    from lexical_drift.eval.ablation_train_months import run_ablation_train_months
+
+    eval_template = load_eval_temporal_config(config)
+    seed_list = _resolve_seed_list(seeds, n_seeds, start_seed)
+    train_months_values = _parse_int_list(train_months, name="train-months")
+    result = run_ablation_train_months(
+        config_template=eval_template,
+        train_months_values=train_months_values,
+        seeds=seed_list,
+        n_authors=n_authors,
+        months=months,
+        difficulty=difficulty.value,
+        artifact_root=artifact_root,
+    )
+
+    typer.echo(f"[ablation-train-months] summary={result['summary_path']}")
+    typer.echo(f"[ablation-train-months] plot={result['plot_path']}")
+    for row in result["rows"]:
+        row_data = dict(row)
+        typer.echo(
+            "[ablation-train-months] "
+            f"train_months={int(row_data['train_months'])} "
+            f"final_accuracy_mean={_format_optional_metric(row_data['final_accuracy_mean'])} "
+            f"final_f1_mean={_format_optional_metric(row_data['final_f1_mean'])} "
+            f"final_bal_acc_mean={_format_optional_metric(row_data['final_balanced_accuracy_mean'])}"
+        )
+
+
+@app.command("ablation-encoder")
+def ablation_encoder(
+    config: Path = typer.Option(
+        Path("configs/eval_temporal.yaml"),
+        help="Path to temporal evaluation config template.",
+    ),
+    encoders: str = typer.Option(
+        "distilbert-base-uncased,bert-base-uncased",
+        help="Comma-separated encoder models.",
+    ),
+    seeds: str = typer.Option(
+        "",
+        help="Comma-separated seeds (e.g. 1,2,3). Overrides --n-seeds/--start-seed.",
+    ),
+    n_seeds: int = typer.Option(3, min=1, help="Number of sequential seeds to run."),
+    start_seed: int = typer.Option(1, help="Starting seed when --seeds is not provided."),
+    n_authors: int = typer.Option(50, min=1, help="Synthetic authors per seed."),
+    months: int = typer.Option(12, min=2, help="Synthetic months per author."),
+    difficulty: Difficulty = typer.Option(
+        Difficulty.hard,
+        help="Synthetic generation preset difficulty.",
+    ),
+    artifact_root: Path = typer.Option(
+        Path("artifacts"),
+        help="Root directory for ablation outputs.",
+    ),
+) -> None:
+    has_torch = _dependency_available("torch")
+    has_transformers = _dependency_available("transformers")
+    if not has_torch or not has_transformers:
+        typer.echo("[ablation-encoder] skipping (torch and/or transformers not installed)")
+        return
+
+    from lexical_drift.eval.ablation_encoder import run_ablation_encoder
+
+    eval_template = load_eval_temporal_config(config)
+    seed_list = _resolve_seed_list(seeds, n_seeds, start_seed)
+    encoder_models = _parse_str_list(encoders, name="encoders")
+    result = run_ablation_encoder(
+        config_template=eval_template,
+        encoder_models=encoder_models,
+        seeds=seed_list,
+        n_authors=n_authors,
+        months=months,
+        difficulty=difficulty.value,
+        artifact_root=artifact_root,
+    )
+
+    typer.echo(f"[ablation-encoder] summary={result['summary_path']}")
+    typer.echo(f"[ablation-encoder] plot={result['plot_path']}")
+    for row in result["rows"]:
+        row_data = dict(row)
+        typer.echo(
+            "[ablation-encoder] "
+            f"encoder={row_data['encoder_model']} "
+            f"final_accuracy_mean={_format_optional_metric(row_data['final_accuracy_mean'])} "
+            f"final_f1_mean={_format_optional_metric(row_data['final_f1_mean'])} "
+            f"final_bal_acc_mean={_format_optional_metric(row_data['final_balanced_accuracy_mean'])}"
+        )
+
+
+@app.command("render-report")
+def render_report(
+    compare_summary: Path = typer.Option(
+        Path("artifacts/eval_temporal_compare_summary.json"),
+        help="Path to eval-temporal-compare summary JSON.",
+    ),
+    out: Path = typer.Option(
+        Path("docs/report.md"),
+        help="Output markdown report path.",
+    ),
+) -> None:
+    from lexical_drift.eval.report import render_compare_report
+
+    output_path = render_compare_report(
+        compare_summary_path=compare_summary,
+        out_path=out,
+    )
+    typer.echo(f"[render-report] wrote report to {output_path}")
 
 
 @app.command("benchmark")
