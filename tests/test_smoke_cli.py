@@ -15,9 +15,17 @@ def test_cli_help() -> None:
     assert "train-baseline" in result.output
     assert "train-nn" in result.output
     assert "train-temporal" in result.output
+    assert "train-e2e" in result.output
+    assert "eval-e2e" in result.output
+    assert "pretrain-contrastive" in result.output
+    assert "train-multitask" in result.output
+    assert "ablation-drift-weight" in result.output
     assert "eval-temporal" in result.output
+    assert "eval-temporal-real" in result.output
     assert "eval-temporal-sweep" in result.output
     assert "eval-temporal-compare" in result.output
+    assert "prepare-real" in result.output
+    assert "render-report" in result.output
     assert "benchmark" in result.output
     assert "predict" in result.output
 

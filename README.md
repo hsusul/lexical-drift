@@ -153,6 +153,31 @@ lexdrift render-report \
   --out docs/report.md
 ```
 
+## How to Run Experiments and Generate a Report
+
+```bash
+# 1) baseline sweep
+lexdrift eval-temporal-sweep --seeds 1,2,3 --n-authors 80 --months 12 --difficulty hard
+
+# 2) compare two temporal configs (for example fixed vs calibrated thresholds)
+lexdrift eval-temporal-compare \
+  --config-a configs/eval_temporal_fixed.yaml \
+  --config-b configs/eval_temporal_calib.yaml \
+  --seeds 1,2,3 \
+  --n-authors 50 \
+  --months 12 \
+  --difficulty hard
+
+# 3) optional contrastive + multitask runs
+lexdrift pretrain-contrastive --config configs/pretrain_contrastive.yaml
+lexdrift train-multitask --config configs/train_multitask.yaml
+
+# 4) render artifact-driven report
+lexdrift render-report \
+  --compare-summary artifacts/eval_temporal_compare_summary.json \
+  --out docs/report.md
+```
+
 ## Dashboard
 
 Optional Streamlit dashboard for browsing sweep and compare outputs:
