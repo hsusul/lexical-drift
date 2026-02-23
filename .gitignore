@@ -34,3 +34,7 @@ docs/report.md
 # generated reports
 /docs/report.md
 docs/report.md
+
+# generated outputs
+artifacts/
+docs/report.md

@@ -5,7 +5,7 @@ encoder_model: distilbert-base-uncased
 max_length: 128
 batch_size: 8
 train_months: 8
-checkpoint_path: artifacts/e2e/latest/e2e_model.pt
+checkpoint_path: artifacts/e2e/train_e2e_20260223_231947_f898dc88/e2e_model.pt
 test_size: 0.2
 pooling: cls
 threshold: 0.5
