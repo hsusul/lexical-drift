@@ -30,3 +30,6 @@ docs/report.md
 
 # OS
 .DS_Store
+
+# generated reports
+/docs/report.md
