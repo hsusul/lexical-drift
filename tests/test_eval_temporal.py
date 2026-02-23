@@ -113,6 +113,7 @@ def test_eval_temporal_per_month_metrics_and_cache(tmp_path, monkeypatch) -> Non
     assert "model_type" in payload
     assert "plot_paths" in payload
     assert "per_month_csv_path" in payload
+    assert "run_metadata_path" in payload
     assert "git_commit_hash" in payload
     assert "timestamp_iso" in payload
     assert "dataset_hash" in payload
@@ -124,6 +125,13 @@ def test_eval_temporal_per_month_metrics_and_cache(tmp_path, monkeypatch) -> Non
     assert Path(str(plot_paths_payload["embedding_drift_over_time_path"])).exists()
     assert Path(str(plot_paths_payload["drift_vs_accuracy_delta_path"])).exists()
     assert Path(str(payload["per_month_csv_path"])).exists()
+    run_metadata_path = Path(str(payload["run_metadata_path"]))
+    assert run_metadata_path.exists()
+    run_metadata_payload = json.loads(run_metadata_path.read_text(encoding="utf-8"))
+    assert isinstance(run_metadata_payload["seed"], int)
+    assert isinstance(run_metadata_payload["encoder_model"], str)
+    assert isinstance(run_metadata_payload["model_type"], str)
+    assert isinstance(run_metadata_payload["config_hash"], str)
 
     for month_entry in payload["per_month"]:
         assert "month_index" in month_entry
@@ -172,6 +180,7 @@ def test_eval_temporal_per_month_metrics_and_cache(tmp_path, monkeypatch) -> Non
     assert isinstance(first["chosen_threshold"], float)
     assert isinstance(first["calibration_metric"], str)
     assert isinstance(first["final_month_threshold"], float)
+    assert Path(str(first["run_metadata_path"])).exists()
     assert isinstance(first["per_month"][0]["pred_pos_rate"], float)
     assert isinstance(first["per_month"][0]["tn"], int)
     assert isinstance(first["per_month"][0]["threshold_used"], float)

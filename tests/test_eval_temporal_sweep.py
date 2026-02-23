@@ -69,7 +69,9 @@ def test_eval_temporal_sweep_runs_and_aggregates(tmp_path, monkeypatch) -> None:
 
     assert Path(str(sweep["results_path"])).exists()
     sweep_csv_path = Path(str(sweep["sweep_records_csv_path"]))
+    sweep_metadata_path = Path(str(sweep["run_metadata_path"]))
     assert sweep_csv_path.exists()
+    assert sweep_metadata_path.exists()
     assert int(sweep["total_runs"]) == 2
     assert int(sweep["success_count"]) == 2
     assert int(sweep["failure_count"]) == 0
@@ -132,3 +134,8 @@ def test_eval_temporal_sweep_runs_and_aggregates(tmp_path, monkeypatch) -> None:
     header = sweep_csv_path.read_text(encoding="utf-8").splitlines()[0]
     assert "seed" in header
     assert "final_accuracy" in header
+    sweep_metadata = json.loads(sweep_metadata_path.read_text(encoding="utf-8"))
+    assert sweep_metadata["mode"] == "eval_temporal_sweep"
+    assert sweep_metadata["model_type"] == "gru"
+    assert sweep_metadata["seeds"] == [1, 2]
+    assert isinstance(sweep_metadata["config_hash"], str)

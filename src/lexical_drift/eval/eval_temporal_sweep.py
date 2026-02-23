@@ -11,6 +11,7 @@ from lexical_drift.config import EvalTemporalConfig
 from lexical_drift.datasets.synthetic import save_synthetic_dataset
 from lexical_drift.eval.eval_temporal import run_eval_temporal
 from lexical_drift.utils import ensure_dir
+from lexical_drift.utils.metadata import config_sha256, git_commit_hash
 
 SUMMARY_METRICS = (
     "accuracy",
@@ -160,6 +161,7 @@ def run_eval_temporal_sweep_with_inputs(
     output_results = (
         Path(results_path) if results_path else output_root / "eval_temporal_sweep.jsonl"
     )
+    sweep_metadata_path = output_root / "run_metadata.json"
     output_results.parent.mkdir(parents=True, exist_ok=True)
     if output_results.exists():
         output_results.unlink()
@@ -231,9 +233,24 @@ def run_eval_temporal_sweep_with_inputs(
     aggregate = aggregate_sweep_metrics(records)
     sweep_records_csv_path = output_root / "sweep_records.csv"
     _write_sweep_records_csv(sweep_records_csv_path, records)
+    sweep_metadata = {
+        "mode": "eval_temporal_sweep",
+        "model_type": config_template.model_type,
+        "encoder_model": config_template.encoder_model,
+        "max_length": int(config_template.max_length),
+        "train_months": int(config_template.train_months),
+        "seeds": [int(seed) for seed in seeds],
+        "results_path": str(output_results),
+        "sweep_records_csv_path": str(sweep_records_csv_path),
+        "run_root": str(output_root),
+        "config_hash": config_sha256(config_template),
+        "git_commit_hash": git_commit_hash(),
+    }
+    sweep_metadata_path.write_text(json.dumps(sweep_metadata, indent=2), encoding="utf-8")
     return {
         "results_path": str(output_results),
         "sweep_records_csv_path": str(sweep_records_csv_path),
+        "run_metadata_path": str(sweep_metadata_path),
         "records": records,
         "model_type": config_template.model_type,
         **aggregate,

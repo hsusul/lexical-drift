@@ -675,6 +675,7 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
     final_month_probs_list = [float(value) for value in final_month_probs.tolist()]
     metrics_path = output_dir / "eval_temporal_metrics.json"
     per_month_csv_path = output_dir / "per_month_metrics.csv"
+    run_metadata_path = output_dir / "run_metadata.json"
     pd.DataFrame(per_month).to_csv(per_month_csv_path, index=False)
     plot_paths = _save_eval_plots(per_month=per_month, output_dir=output_dir)
     dataset_hash = file_sha256(data_path)
@@ -713,8 +714,29 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
         "model_path": str(model_path),
         "per_month_csv_path": str(per_month_csv_path),
         "plot_paths": plot_paths,
+        "run_metadata_path": str(run_metadata_path),
     }
     metrics_path.write_text(json.dumps(metrics_payload, indent=2), encoding="utf-8")
+
+    run_metadata = {
+        "seed": int(config.random_seed),
+        "model_type": config.model_type,
+        "encoder_model": config.encoder_model,
+        "max_length": int(config.max_length),
+        "train_months": int(config.train_months),
+        "config_hash": config_hash,
+        "dataset_hash": dataset_hash,
+        "cache_fingerprint": cache_fingerprint,
+        "git_commit_hash": commit_hash,
+        "timestamp_iso": timestamp_iso,
+        "input_path": str(data_path),
+        "output_dir": str(output_dir),
+        "metrics_path": str(metrics_path),
+        "per_month_csv_path": str(per_month_csv_path),
+        "model_path": str(model_path),
+        "plot_paths": plot_paths,
+    }
+    run_metadata_path.write_text(json.dumps(run_metadata, indent=2), encoding="utf-8")
 
     return {
         "model_type": config.model_type,
@@ -743,4 +765,5 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
         "final_month_probs": final_month_probs_list,
         "plot_paths": plot_paths,
         "per_month_csv_path": str(per_month_csv_path),
+        "run_metadata_path": str(run_metadata_path),
     }
