@@ -16,3 +16,7 @@ drift_target_metric: cosine
 pooling: cls
 freeze_encoder: false
 threshold: 0.5
+use_time_embeddings: true
+loss_type: bce
+pos_weight: null
+focal_gamma: 2.0

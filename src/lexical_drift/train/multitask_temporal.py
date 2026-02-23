@@ -15,6 +15,7 @@ from lexical_drift.datasets.e2e import build_sequence_batch
 from lexical_drift.datasets.synthetic import save_synthetic_dataset
 from lexical_drift.datasets.temporal import build_author_sequences_with_months
 from lexical_drift.eval.eval_temporal import _save_eval_plots
+from lexical_drift.losses.classification import build_binary_classification_loss
 from lexical_drift.models.temporal_encoder import TemporalEncoder
 from lexical_drift.utils import ensure_dir
 from lexical_drift.utils.metadata import config_sha256, file_sha256, git_commit_hash
@@ -47,7 +48,9 @@ def _import_matplotlib_pyplot():
     return plt
 
 
-def _prepare_dataset(path: Path) -> tuple[list[str], list[list[str]], np.ndarray]:
+def _prepare_dataset(
+    path: Path,
+) -> tuple[list[str], list[list[str]], list[list[int]], np.ndarray]:
     if not path.exists():
         raise FileNotFoundError(f"Input dataset not found: {path}")
     frame = pd.read_csv(path)
@@ -55,11 +58,11 @@ def _prepare_dataset(path: Path) -> tuple[list[str], list[list[str]], np.ndarray
     if missing:
         missing_cols = ", ".join(sorted(missing))
         raise ValueError(f"Dataset is missing required columns: {missing_cols}")
-    authors, sequences_texts, _sequences_months, labels = build_author_sequences_with_months(frame)
+    authors, sequences_texts, sequences_months, labels = build_author_sequences_with_months(frame)
     lengths = sorted({len(sequence) for sequence in sequences_texts})
     if len(lengths) != 1:
         raise ValueError("All authors must have the same number of months for multitask training")
-    return authors, sequences_texts, labels.astype(np.int64)
+    return authors, sequences_texts, sequences_months, labels.astype(np.int64)
 
 
 class MultiTaskTemporalHead:
@@ -134,11 +137,13 @@ def _compute_per_month_metrics(
     device,
     author_ids: list[str],
     sequences_texts: list[list[str]],
+    sequences_months: list[list[int]],
     labels: np.ndarray,
     eval_indices: np.ndarray,
     train_months: int,
     batch_size: int,
     threshold: float,
+    time_embedding,
 ) -> list[dict[str, float | int | None]]:
     torch, _nn = _require_torch()
     y_eval = labels[eval_indices].astype(int)
@@ -152,6 +157,7 @@ def _compute_per_month_metrics(
             batch_data = build_sequence_batch(
                 author_ids=author_ids,
                 sequences_texts=sequences_texts,
+                sequences_months=sequences_months,
                 labels=labels,
                 indices=batch,
                 max_months=month_index + 1,
@@ -160,6 +166,12 @@ def _compute_per_month_metrics(
                 encoder.eval()
                 head.eval()
                 embeddings = encoder.encode_sequences(batch_data.texts, device=device)
+                if time_embedding is not None:
+                    positions = torch.from_numpy(batch_data.month_indices).to(
+                        device=embeddings.device,
+                        dtype=torch.long,
+                    )
+                    embeddings = embeddings + time_embedding(positions)
                 logits, _drift_pred = head(embeddings)
                 probs = torch.sigmoid(logits).squeeze(1).detach().cpu().numpy().astype(np.float32)
             probs_parts.append(probs)
@@ -208,7 +220,7 @@ def run_train_multitask(config: TrainMultiTaskConfig) -> dict[str, object]:
     torch.manual_seed(config.random_seed)
     device = torch.device("cpu")
 
-    authors, sequences_texts, labels = _prepare_dataset(Path(config.input_path))
+    authors, sequences_texts, sequences_months, labels = _prepare_dataset(Path(config.input_path))
     total_months = len(sequences_texts[0])
     if config.train_months >= total_months:
         raise ValueError(f"train_months must be < total months ({total_months})")
@@ -234,12 +246,22 @@ def run_train_multitask(config: TrainMultiTaskConfig) -> dict[str, object]:
         layers=config.layers,
         dropout=config.dropout,
     ).to(device)
+    time_embedding = None
+    if config.use_time_embeddings:
+        time_embedding = torch.nn.Embedding(total_months, encoder.output_dim).to(device)
 
     parameters = list(head.parameters()) + list(
         parameter for parameter in encoder.parameters() if parameter.requires_grad
     )
+    if time_embedding is not None:
+        parameters.extend(time_embedding.parameters())
     optimizer = torch.optim.Adam(parameters, lr=config.lr)
-    cls_loss_fn = torch.nn.BCEWithLogitsLoss()
+    cls_loss_fn = build_binary_classification_loss(
+        loss_type=config.loss_type,
+        pos_weight=config.pos_weight,
+        focal_gamma=config.focal_gamma,
+        device=device,
+    )
     drift_loss_fn = torch.nn.MSELoss()
 
     for epoch in range(config.epochs):
@@ -251,6 +273,7 @@ def run_train_multitask(config: TrainMultiTaskConfig) -> dict[str, object]:
             batch_data = build_sequence_batch(
                 author_ids=authors,
                 sequences_texts=sequences_texts,
+                sequences_months=sequences_months,
                 labels=labels,
                 indices=batch,
                 max_months=config.train_months,
@@ -261,6 +284,12 @@ def run_train_multitask(config: TrainMultiTaskConfig) -> dict[str, object]:
                 .unsqueeze(1)
             )
             embeddings = encoder.encode_sequences(batch_data.texts, device=device)
+            if time_embedding is not None:
+                positions = torch.from_numpy(batch_data.month_indices).to(
+                    device=embeddings.device,
+                    dtype=torch.long,
+                )
+                embeddings = embeddings + time_embedding(positions)
             cls_logits, drift_pred = head(embeddings)
             drift_target = _drift_target_from_embeddings(
                 embeddings.detach(),
@@ -284,11 +313,13 @@ def run_train_multitask(config: TrainMultiTaskConfig) -> dict[str, object]:
         device=device,
         author_ids=authors,
         sequences_texts=sequences_texts,
+        sequences_months=sequences_months,
         labels=labels,
         eval_indices=eval_idx,
         train_months=config.train_months,
         batch_size=config.batch_size,
         threshold=config.threshold,
+        time_embedding=time_embedding,
     )
     if not per_month:
         raise ValueError("No evaluation months available for multitask training")
@@ -311,6 +342,13 @@ def run_train_multitask(config: TrainMultiTaskConfig) -> dict[str, object]:
             "model_type": "multitask_gru",
             "drift_lambda": float(config.drift_lambda),
             "drift_target_metric": config.drift_target_metric,
+            "use_time_embeddings": bool(config.use_time_embeddings),
+            "time_embedding_state_dict": (
+                time_embedding.state_dict() if time_embedding is not None else None
+            ),
+            "loss_type": config.loss_type,
+            "pos_weight": config.pos_weight,
+            "focal_gamma": float(config.focal_gamma),
         },
         model_path,
     )
@@ -349,6 +387,10 @@ def run_train_multitask(config: TrainMultiTaskConfig) -> dict[str, object]:
 
     return {
         "model_type": "multitask_gru",
+        "use_time_embeddings": bool(config.use_time_embeddings),
+        "loss_type": config.loss_type,
+        "pos_weight": config.pos_weight,
+        "focal_gamma": float(config.focal_gamma),
         "output_dir": str(output_dir),
         "model_path": str(model_path),
         "metrics_path": str(metrics_path),

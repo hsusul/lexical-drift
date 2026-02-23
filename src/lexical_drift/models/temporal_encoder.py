@@ -11,7 +11,7 @@ def _require_torch():
         import torch
     except ImportError as exc:
         raise ImportError(
-            'PyTorch is required for temporal encoder features. '
+            "PyTorch is required for temporal encoder features. "
             'Install with: pip install -e ".[torch]"'
         ) from exc
     return torch
@@ -22,8 +22,7 @@ def _import_transformers():
         from transformers import AutoModel, AutoTokenizer
     except ImportError as exc:
         raise ImportError(
-            "transformers is required for e2e temporal runs. "
-            'Install with: pip install -e ".[nlp]"'
+            'transformers is required for e2e temporal runs. Install with: pip install -e ".[nlp]"'
         ) from exc
     return AutoTokenizer, AutoModel
 

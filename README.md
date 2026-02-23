@@ -58,6 +58,12 @@ tool**.
 - `gru` (default): temporal GRU classifier over monthly embedding prefixes.
 - `baseline_lr`: non-temporal logistic regression baseline on month embeddings.
 - `attention`: temporal self-attention encoder with positional embeddings.
+- `transformer`: temporal transformer encoder with optional month index embeddings.
+
+Class-imbalance controls are available in eval/train configs:
+- `loss_type: bce | focal`
+- `pos_weight: <float|null>`
+- `focal_gamma: <float>`
 
 Each `eval-temporal` run writes these plot artifacts into that run's `output_dir`:
 - `per_month_metrics.png`
@@ -69,6 +75,8 @@ Each `eval-temporal` run writes these plot artifacts into that run's `output_dir
 ```bash
 lexdrift eval-temporal --config configs/eval_temporal.yaml
 lexdrift eval-temporal --config configs/eval_temporal_fixed.yaml
+lexdrift eval-temporal --config configs/eval_temporal_transformer_time.yaml
+lexdrift eval-temporal --config configs/eval_temporal_transformer_notime.yaml
 ```
 
 ## End-to-End Temporal Pipeline
@@ -78,6 +86,7 @@ training loop (no embedding cache):
 
 ```bash
 lexdrift train-e2e --config configs/train_e2e_temporal.yaml
+lexdrift train-e2e --config configs/train_e2e_temporal_focal.yaml
 lexdrift eval-e2e --config configs/eval_e2e_temporal.yaml
 ```
 
@@ -90,6 +99,14 @@ Pretrain the encoder with adjacent-month positives (InfoNCE), then use the check
 lexdrift pretrain-contrastive --config configs/pretrain_contrastive.yaml
 ```
 
+## Temporal Order Pretraining
+
+Pretrain an encoder to predict whether adjacent monthly texts are in chronological order:
+
+```bash
+lexdrift pretrain-temporal-order --config configs/pretrain_temporal_order.yaml
+```
+
 ## Multitask Temporal Training
 
 Train a joint classifier + drift regressor and run drift-weight ablations:
@@ -97,6 +114,15 @@ Train a joint classifier + drift regressor and run drift-weight ablations:
 ```bash
 lexdrift train-multitask --config configs/train_multitask.yaml
 lexdrift ablation-drift-weight --lambdas 0,0.1,0.3,1.0 --seeds 1,2,3 --months 12
+```
+
+## Time-Embedding Ablation
+
+Compare transformer temporal evaluation with and without explicit month embeddings:
+
+```bash
+lexdrift ablation-time-embeddings --config configs/eval_temporal_transformer_time.yaml \
+  --seeds 1,2,3 --n-authors 50 --months 12 --difficulty hard
 ```
 
 ## Real Dataset Preparation
@@ -200,8 +226,10 @@ lexdrift eval-temporal-compare --config-a configs/eval_temporal_fixed.yaml --con
 lexdrift train-e2e --config configs/train_e2e_temporal.yaml
 lexdrift eval-e2e --config configs/eval_e2e_temporal.yaml
 lexdrift pretrain-contrastive --config configs/pretrain_contrastive.yaml
+lexdrift pretrain-temporal-order --config configs/pretrain_temporal_order.yaml
 lexdrift train-multitask --config configs/train_multitask.yaml
 lexdrift ablation-drift-weight --lambdas 0,0.1,0.3,1.0 --seeds 1,2,3 --months 12
+lexdrift ablation-time-embeddings --config configs/eval_temporal_transformer_time.yaml --seeds 1,2,3
 lexdrift prepare-real --input data/raw/real_sample.csv --out data/processed/real.parquet
 lexdrift eval-temporal-real --dataset prepared_local --path data/processed/real.parquet --config configs/real_eval.yaml
 lexdrift benchmark --seeds 1,2,3

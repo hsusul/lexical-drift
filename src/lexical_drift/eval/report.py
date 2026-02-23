@@ -125,6 +125,13 @@ def _latest_match(pattern_root: Path, pattern: str) -> Path | None:
     return matches[-1]
 
 
+def _format_setting(summary: dict[str, object], key: str) -> str:
+    value = summary.get(key)
+    if value is None:
+        return "na"
+    return str(value)
+
+
 def render_compare_report(
     *,
     compare_summary_path: str | Path,
@@ -161,6 +168,17 @@ def render_compare_report(
         f"- Authors: {payload.get('n_authors', 'na')}",
         f"- Months: {payload.get('months', 'na')}",
         f"- Difficulty: {payload.get('difficulty', 'na')}",
+        "",
+        "### Model Settings",
+        "",
+        f"- A model_type: {_format_setting(summary_a, 'model_type')}",
+        f"- A use_time_embeddings: {_format_setting(summary_a, 'use_time_embeddings')}",
+        f"- A loss_type: {_format_setting(summary_a, 'loss_type')}",
+        f"- A pos_weight: {_format_setting(summary_a, 'pos_weight')}",
+        f"- B model_type: {_format_setting(summary_b, 'model_type')}",
+        f"- B use_time_embeddings: {_format_setting(summary_b, 'use_time_embeddings')}",
+        f"- B loss_type: {_format_setting(summary_b, 'loss_type')}",
+        f"- B pos_weight: {_format_setting(summary_b, 'pos_weight')}",
         "",
         "## Transformer/GRU Compare",
         "",
@@ -246,6 +264,53 @@ def render_compare_report(
                 f"- Checkpoint: `{contrastive_payload.get('checkpoint_path', 'na')}`",
             ]
         )
+
+    temporal_order_metrics = _latest_match(artifact_root, "temporal_order_*/pretrain_metrics.json")
+    if temporal_order_metrics is not None:
+        temporal_order_payload = _load_json(temporal_order_metrics)
+        lines.extend(
+            [
+                "",
+                "## Temporal Order Pretraining",
+                "",
+                f"- Metrics: `{temporal_order_metrics}`",
+                f"- Final loss: {_format_value(temporal_order_payload.get('final_loss'))}",
+                f"- Final accuracy: {_format_value(temporal_order_payload.get('final_accuracy'))}",
+                f"- Example count: {_format_value(temporal_order_payload.get('n_examples'))}",
+                f"- Checkpoint: `{temporal_order_payload.get('checkpoint_path', 'na')}`",
+            ]
+        )
+
+    time_embedding_ablation = _latest_match(
+        artifact_root,
+        "ablation_time_embeddings/ablation_summary.json",
+    )
+    if time_embedding_ablation is not None:
+        time_ablation_payload = _load_json(time_embedding_ablation)
+        lines.extend(
+            [
+                "",
+                "## Time Embedding Ablation",
+                "",
+                f"- Summary: `{time_embedding_ablation}`",
+                "",
+                "| use_time_embeddings | final_accuracy_mean | final_f1_mean |",
+                "|---:|---:|---:|",
+            ]
+        )
+        rows = time_ablation_payload.get("rows", [])
+        if isinstance(rows, list):
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                lines.append(
+                    "| "
+                    f"{_format_value(row.get('use_time_embeddings'))} | "
+                    f"{_format_value(row.get('final_accuracy_mean'))} | "
+                    f"{_format_value(row.get('final_f1_mean'))} |"
+                )
+        lines.append("")
+        lines.append(f"- Plot: `{time_embedding_ablation.parent / 'ablation_time_embeddings.png'}`")
 
     multitask_ablation = _latest_match(artifact_root, "ablation_drift_weight/ablation_summary.json")
     if multitask_ablation is not None:

@@ -11,8 +11,7 @@ def _require_torch():
         import torch
     except ImportError as exc:
         raise ImportError(
-            'PyTorch is required for contrastive losses. '
-            'Install with: pip install -e ".[torch]"'
+            'PyTorch is required for contrastive losses. Install with: pip install -e ".[torch]"'
         ) from exc
     return torch
 

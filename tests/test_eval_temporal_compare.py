@@ -124,6 +124,8 @@ def test_eval_temporal_compare_summary_and_deltas(tmp_path, monkeypatch) -> None
     assert required_keys.issubset(payload)
     assert payload["summary_a"]["model_type"] == "gru"
     assert payload["summary_b"]["model_type"] == "gru"
+    assert isinstance(payload["summary_a"]["focal_gamma"], float)
+    assert isinstance(payload["summary_b"]["focal_gamma"], float)
     assert isinstance(payload["summary_a"]["per_run_metadata"], list)
     assert isinstance(payload["summary_b"]["per_run_metadata"], list)
     assert isinstance(payload["per_run_metadata_a"], list)

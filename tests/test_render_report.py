@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import replace
 
 import numpy as np
@@ -73,6 +74,35 @@ def test_render_report_from_compare_summary(tmp_path, monkeypatch) -> None:
         artifact_root=tmp_path / "artifacts",
     )
 
+    temporal_order_dir = tmp_path / "artifacts" / "temporal_order_20240101_000000_deadbeef"
+    temporal_order_dir.mkdir(parents=True, exist_ok=True)
+    (temporal_order_dir / "pretrain_metrics.json").write_text(
+        '{"final_loss": 0.1234, "final_accuracy": 0.5678, "n_examples": 128, '
+        '"checkpoint_path": "artifacts/temporal_order/encoder_checkpoint.pt"}',
+        encoding="utf-8",
+    )
+
+    time_ablation_dir = tmp_path / "artifacts" / "ablation_time_embeddings"
+    time_ablation_dir.mkdir(parents=True, exist_ok=True)
+    time_ablation_payload = {
+        "rows": [
+            {
+                "use_time_embeddings": False,
+                "final_accuracy_mean": 0.5,
+                "final_f1_mean": 0.4,
+            },
+            {
+                "use_time_embeddings": True,
+                "final_accuracy_mean": 0.6,
+                "final_f1_mean": 0.5,
+            },
+        ]
+    }
+    (time_ablation_dir / "ablation_summary.json").write_text(
+        json.dumps(time_ablation_payload),
+        encoding="utf-8",
+    )
+
     report_path = tmp_path / "docs" / "report.md"
     output_path = render_compare_report(
         compare_summary_path=compare_result["summary_path"],
@@ -84,4 +114,6 @@ def test_render_report_from_compare_summary(tmp_path, monkeypatch) -> None:
     assert "## Configurations" in text
     assert "## Significance (Final Month)" in text
     assert "## Drift-Performance Correlation" in text
+    assert "## Temporal Order Pretraining" in text
+    assert "## Time Embedding Ablation" in text
     assert "## Artifact Paths" in text

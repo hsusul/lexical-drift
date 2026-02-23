@@ -66,6 +66,10 @@ class EvalTemporalConfig:
     lr: float
     epochs: int
     model_type: str = "gru"
+    use_time_embeddings: bool = True
+    loss_type: str = "bce"
+    pos_weight: float | None = None
+    focal_gamma: float = 2.0
     threshold_mode: str = "fixed"
     fixed_threshold: float = 0.5
     calibration_metric: str = "balanced_accuracy"
@@ -90,6 +94,10 @@ class TrainE2EConfig:
     pooling: str = "cls"
     freeze_encoder: bool = False
     pretrained_encoder_path: str = ""
+    use_time_embeddings: bool = True
+    loss_type: str = "bce"
+    pos_weight: float | None = None
+    focal_gamma: float = 2.0
 
 
 @dataclass(slots=True)
@@ -145,6 +153,26 @@ class TrainMultiTaskConfig:
     pooling: str = "cls"
     freeze_encoder: bool = False
     threshold: float = 0.5
+    use_time_embeddings: bool = True
+    loss_type: str = "bce"
+    pos_weight: float | None = None
+    focal_gamma: float = 2.0
+
+
+@dataclass(slots=True)
+class PretrainTemporalOrderConfig:
+    input_path: str
+    output_dir: str
+    random_seed: int
+    encoder_model: str
+    max_length: int
+    batch_size: int
+    lr: float
+    epochs: int
+    train_months: int
+    hidden_dim: int
+    pooling: str = "cls"
+    freeze_encoder: bool = False
 
 
 def load_train_config(path: str | Path) -> TrainConfig:
@@ -331,6 +359,10 @@ def load_eval_temporal_config(path: str | Path) -> EvalTemporalConfig:
         output_dir=str(raw["output_dir"]),
         random_seed=int(raw["random_seed"]),
         model_type=str(raw.get("model_type", "gru")),
+        use_time_embeddings=bool(raw.get("use_time_embeddings", True)),
+        loss_type=str(raw.get("loss_type", "bce")),
+        pos_weight=None if raw.get("pos_weight") is None else float(raw["pos_weight"]),
+        focal_gamma=float(raw.get("focal_gamma", 2.0)),
         encoder_model=str(raw["encoder_model"]),
         max_length=int(raw["max_length"]),
         batch_size=int(raw["batch_size"]),
@@ -358,6 +390,12 @@ def load_eval_temporal_config(path: str | Path) -> EvalTemporalConfig:
         raise ValueError("train_months must be >= 1")
     if config.model_type not in {"gru", "baseline_lr", "attention", "transformer"}:
         raise ValueError("model_type must be one of: gru, baseline_lr, attention, transformer")
+    if config.loss_type not in {"bce", "focal"}:
+        raise ValueError("loss_type must be one of: bce, focal")
+    if config.pos_weight is not None and config.pos_weight <= 0:
+        raise ValueError("pos_weight must be > 0 when provided")
+    if config.focal_gamma < 0:
+        raise ValueError("focal_gamma must be >= 0")
     if config.gru_hidden_dim <= 0:
         raise ValueError("gru_hidden_dim must be > 0")
     if config.gru_layers <= 0:
@@ -424,6 +462,10 @@ def load_train_e2e_config(path: str | Path) -> TrainE2EConfig:
         pooling=str(raw.get("pooling", "cls")),
         freeze_encoder=bool(raw.get("freeze_encoder", False)),
         pretrained_encoder_path=str(raw.get("pretrained_encoder_path", "")),
+        use_time_embeddings=bool(raw.get("use_time_embeddings", True)),
+        loss_type=str(raw.get("loss_type", "bce")),
+        pos_weight=None if raw.get("pos_weight") is None else float(raw["pos_weight"]),
+        focal_gamma=float(raw.get("focal_gamma", 2.0)),
     )
 
     if not config.encoder_model.strip():
@@ -448,6 +490,12 @@ def load_train_e2e_config(path: str | Path) -> TrainE2EConfig:
         raise ValueError("test_size must be between 0 and 1")
     if config.pooling not in {"cls", "mean"}:
         raise ValueError("pooling must be one of: cls, mean")
+    if config.loss_type not in {"bce", "focal"}:
+        raise ValueError("loss_type must be one of: bce, focal")
+    if config.pos_weight is not None and config.pos_weight <= 0:
+        raise ValueError("pos_weight must be > 0 when provided")
+    if config.focal_gamma < 0:
+        raise ValueError("focal_gamma must be >= 0")
 
     return config
 
@@ -614,6 +662,10 @@ def load_train_multitask_config(path: str | Path) -> TrainMultiTaskConfig:
         pooling=str(raw.get("pooling", "cls")),
         freeze_encoder=bool(raw.get("freeze_encoder", False)),
         threshold=float(raw.get("threshold", 0.5)),
+        use_time_embeddings=bool(raw.get("use_time_embeddings", True)),
+        loss_type=str(raw.get("loss_type", "bce")),
+        pos_weight=None if raw.get("pos_weight") is None else float(raw["pos_weight"]),
+        focal_gamma=float(raw.get("focal_gamma", 2.0)),
     )
 
     if not config.encoder_model.strip():
@@ -644,5 +696,68 @@ def load_train_multitask_config(path: str | Path) -> TrainMultiTaskConfig:
         raise ValueError("pooling must be one of: cls, mean")
     if not 0.0 < config.threshold < 1.0:
         raise ValueError("threshold must be between 0 and 1")
+    if config.loss_type not in {"bce", "focal"}:
+        raise ValueError("loss_type must be one of: bce, focal")
+    if config.pos_weight is not None and config.pos_weight <= 0:
+        raise ValueError("pos_weight must be > 0 when provided")
+    if config.focal_gamma < 0:
+        raise ValueError("focal_gamma must be >= 0")
+
+    return config
+
+
+def load_pretrain_temporal_order_config(path: str | Path) -> PretrainTemporalOrderConfig:
+    config_path = Path(path)
+    with config_path.open("r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f) or {}
+
+    required = {
+        "input_path",
+        "output_dir",
+        "random_seed",
+        "encoder_model",
+        "max_length",
+        "batch_size",
+        "lr",
+        "epochs",
+        "train_months",
+        "hidden_dim",
+    }
+    missing = sorted(required - set(raw.keys()))
+    if missing:
+        missing_keys = ", ".join(missing)
+        raise ValueError(f"Missing config keys: {missing_keys}")
+
+    config = PretrainTemporalOrderConfig(
+        input_path=str(raw["input_path"]),
+        output_dir=str(raw["output_dir"]),
+        random_seed=int(raw["random_seed"]),
+        encoder_model=str(raw["encoder_model"]),
+        max_length=int(raw["max_length"]),
+        batch_size=int(raw["batch_size"]),
+        lr=float(raw["lr"]),
+        epochs=int(raw["epochs"]),
+        train_months=int(raw["train_months"]),
+        hidden_dim=int(raw["hidden_dim"]),
+        pooling=str(raw.get("pooling", "cls")),
+        freeze_encoder=bool(raw.get("freeze_encoder", False)),
+    )
+
+    if not config.encoder_model.strip():
+        raise ValueError("encoder_model must be non-empty")
+    if config.max_length <= 0:
+        raise ValueError("max_length must be > 0")
+    if config.batch_size <= 0:
+        raise ValueError("batch_size must be > 0")
+    if config.lr <= 0:
+        raise ValueError("lr must be > 0")
+    if config.epochs <= 0:
+        raise ValueError("epochs must be > 0")
+    if config.train_months < 1:
+        raise ValueError("train_months must be >= 1")
+    if config.hidden_dim <= 0:
+        raise ValueError("hidden_dim must be > 0")
+    if config.pooling not in {"cls", "mean"}:
+        raise ValueError("pooling must be one of: cls, mean")
 
     return config

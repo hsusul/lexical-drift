@@ -456,6 +456,10 @@ def run_eval_temporal_compare(
         "difficulty": difficulty,
         "summary_a": {
             "model_type": str(result_a["model_type"]),
+            "use_time_embeddings": bool(config_a_template.use_time_embeddings),
+            "loss_type": config_a_template.loss_type,
+            "pos_weight": config_a_template.pos_weight,
+            "focal_gamma": float(config_a_template.focal_gamma),
             "total_runs": int(result_a["total_runs"]),
             "success_count": int(result_a["success_count"]),
             "failure_count": int(result_a["failure_count"]),
@@ -469,6 +473,10 @@ def run_eval_temporal_compare(
         },
         "summary_b": {
             "model_type": str(result_b["model_type"]),
+            "use_time_embeddings": bool(config_b_template.use_time_embeddings),
+            "loss_type": config_b_template.loss_type,
+            "pos_weight": config_b_template.pos_weight,
+            "focal_gamma": float(config_b_template.focal_gamma),
             "total_runs": int(result_b["total_runs"]),
             "success_count": int(result_b["success_count"]),
             "failure_count": int(result_b["failure_count"]),

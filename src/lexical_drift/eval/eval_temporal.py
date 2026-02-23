@@ -17,6 +17,7 @@ from sklearn.preprocessing import StandardScaler
 from lexical_drift.config import EvalTemporalConfig
 from lexical_drift.datasets.temporal import build_author_sequences_with_months
 from lexical_drift.features.encoder import encode_texts_to_embeddings
+from lexical_drift.losses.classification import build_binary_classification_loss
 from lexical_drift.training.train_temporal import compute_cache_fingerprint
 from lexical_drift.utils import ensure_dir
 from lexical_drift.utils.metadata import config_sha256, file_sha256, git_commit_hash
@@ -429,8 +430,10 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
         X_train = embeddings[train_idx, : config.train_months, :]
         y_train = labels[train_idx].astype(np.float32)
 
+        train_month_indices = months_matrix[train_idx, : config.train_months].astype(np.int64)
         train_dataset = TensorDataset(
             torch.from_numpy(X_train),
+            torch.from_numpy(train_month_indices),
             torch.from_numpy(y_train).unsqueeze(1),
         )
         train_generator = torch.Generator().manual_seed(config.random_seed)
@@ -465,17 +468,26 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
                 layers=max(int(config.gru_layers), 1),
                 heads=4,
                 dropout=config.dropout,
+                use_time_embeddings=config.use_time_embeddings,
             )
         optimizer = torch.optim.Adam(model.parameters(), lr=config.lr)
-        criterion = torch.nn.BCEWithLogitsLoss()
+        criterion = build_binary_classification_loss(
+            loss_type=config.loss_type,
+            pos_weight=config.pos_weight,
+            focal_gamma=config.focal_gamma,
+            device=torch.device("cpu"),
+        )
 
         for epoch in range(config.epochs):
             model.train()
             epoch_loss = 0.0
             epoch_count = 0
-            for batch_x, batch_y in train_loader:
+            for batch_x, batch_month_idx, batch_y in train_loader:
                 optimizer.zero_grad()
-                logits = model(batch_x)
+                if config.model_type == "transformer":
+                    logits = model(batch_x, month_indices=batch_month_idx)
+                else:
+                    logits = model(batch_x)
                 loss = criterion(logits, batch_y)
                 loss.backward()
                 optimizer.step()
@@ -498,20 +510,26 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
             "max_length": int(config.max_length),
             "train_months": int(config.train_months),
             "model_type": config.model_type,
+            "loss_type": config.loss_type,
+            "pos_weight": config.pos_weight,
+            "focal_gamma": float(config.focal_gamma),
         }
         if config.model_type in {"attention", "transformer"}:
             model_payload["attention_layers"] = int(max(config.gru_layers, 1))
             model_payload["attention_heads"] = 4
             model_payload["max_positions"] = int(n_months)
+            model_payload["use_time_embeddings"] = bool(config.use_time_embeddings)
         torch.save(model_payload, model_path)
 
         def predict_probs(month_index: int) -> tuple[np.ndarray, np.ndarray | None]:
             with torch.no_grad():
                 X_eval = embeddings[eval_idx, : month_index + 1, :]
+                month_indices_eval = months_matrix[eval_idx, : month_index + 1].astype(np.int64)
                 if config.model_type == "transformer":
                     logits, attention_layers = model(
                         torch.from_numpy(X_eval),
                         return_attention=True,
+                        month_indices=torch.from_numpy(month_indices_eval),
                     )
                     probs = torch.sigmoid(logits).squeeze(1).cpu().numpy().astype(np.float32)
                     if attention_layers:
@@ -757,6 +775,10 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
 
     metrics_payload = {
         "model_type": config.model_type,
+        "use_time_embeddings": bool(config.use_time_embeddings),
+        "loss_type": config.loss_type,
+        "pos_weight": config.pos_weight,
+        "focal_gamma": float(config.focal_gamma),
         "input_path": str(data_path),
         "git_commit_hash": commit_hash,
         "timestamp_iso": timestamp_iso,
@@ -812,6 +834,10 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
 
     return {
         "model_type": config.model_type,
+        "use_time_embeddings": bool(config.use_time_embeddings),
+        "loss_type": config.loss_type,
+        "pos_weight": config.pos_weight,
+        "focal_gamma": float(config.focal_gamma),
         "final_accuracy": float(final_month["accuracy"]),
         "final_f1": float(final_month["f1"]),
         "final_month_index": int(final_month["month_index"]),

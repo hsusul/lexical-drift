@@ -14,6 +14,7 @@ from lexical_drift.config import EvalE2EConfig, TrainE2EConfig
 from lexical_drift.datasets.e2e import build_sequence_batch
 from lexical_drift.datasets.temporal import build_author_sequences_with_months
 from lexical_drift.eval.eval_temporal import _save_eval_plots
+from lexical_drift.losses.classification import build_binary_classification_loss
 from lexical_drift.models.temporal_encoder import TemporalEncoder
 from lexical_drift.utils import ensure_dir
 from lexical_drift.utils.metadata import config_sha256, file_sha256, git_commit_hash
@@ -44,7 +45,9 @@ def _validate_equal_sequence_lengths(sequences_texts: list[list[str]]) -> int:
     return lengths[0]
 
 
-def _prepare_dataset(path: Path) -> tuple[list[str], list[list[str]], np.ndarray]:
+def _prepare_dataset(
+    path: Path,
+) -> tuple[list[str], list[list[str]], list[list[int]], np.ndarray]:
     if not path.exists():
         raise FileNotFoundError(f"Input dataset not found: {path}")
     frame = pd.read_csv(path)
@@ -52,9 +55,9 @@ def _prepare_dataset(path: Path) -> tuple[list[str], list[list[str]], np.ndarray
     if missing:
         missing_cols = ", ".join(sorted(missing))
         raise ValueError(f"Dataset is missing required columns: {missing_cols}")
-    authors, sequences_texts, _sequences_months, labels = build_author_sequences_with_months(frame)
+    authors, sequences_texts, sequences_months, labels = build_author_sequences_with_months(frame)
     _validate_equal_sequence_lengths(sequences_texts)
-    return authors, sequences_texts, labels.astype(np.int64)
+    return authors, sequences_texts, sequences_months, labels.astype(np.int64)
 
 
 def _batch_indices(
@@ -99,6 +102,37 @@ def _compute_confusion_metrics(tn: int, fp: int, fn: int, tp: int) -> dict[str, 
     }
 
 
+def _build_time_embedding(
+    *,
+    torch,
+    enabled: bool,
+    max_positions: int,
+    embedding_dim: int,
+    device,
+):
+    if not enabled:
+        return None
+    return torch.nn.Embedding(max_positions, embedding_dim).to(device)
+
+
+def _apply_time_embeddings(
+    *,
+    embeddings,
+    time_embedding,
+    month_indices=None,
+):
+    if time_embedding is None:
+        return embeddings
+    torch = _require_torch()
+    if month_indices is None:
+        sequence_length = int(embeddings.shape[1])
+        positions = torch.arange(sequence_length, device=embeddings.device)
+        positions = positions.unsqueeze(0).expand(int(embeddings.shape[0]), sequence_length)
+    else:
+        positions = month_indices.to(device=embeddings.device, dtype=torch.long)
+    return embeddings + time_embedding(positions)
+
+
 def _predict_probs_for_month(
     *,
     encoder: TemporalEncoder,
@@ -107,9 +141,11 @@ def _predict_probs_for_month(
     author_ids: list[str],
     sequences_texts: list[list[str]],
     labels: np.ndarray,
+    sequences_months: list[list[int]],
     eval_indices: np.ndarray,
     month_index: int,
     batch_size: int,
+    time_embedding,
 ) -> np.ndarray:
     torch = _require_torch()
     probs_parts: list[np.ndarray] = []
@@ -124,12 +160,18 @@ def _predict_probs_for_month(
         batch_data = build_sequence_batch(
             author_ids=author_ids,
             sequences_texts=sequences_texts,
+            sequences_months=sequences_months,
             labels=labels,
             indices=batch,
             max_months=month_index + 1,
         )
         with torch.no_grad():
             embeddings = encoder.encode_sequences(batch_data.texts, device=device)
+            embeddings = _apply_time_embeddings(
+                embeddings=embeddings,
+                time_embedding=time_embedding,
+                month_indices=torch.from_numpy(batch_data.month_indices),
+            )
             logits = head(embeddings)
             probs = torch.sigmoid(logits).squeeze(1).detach().cpu().numpy().astype(np.float32)
         probs_parts.append(probs)
@@ -146,10 +188,12 @@ def _evaluate_e2e(
     author_ids: list[str],
     sequences_texts: list[list[str]],
     labels: np.ndarray,
+    sequences_months: list[list[int]],
     eval_indices: np.ndarray,
     train_months: int,
     batch_size: int,
     threshold: float,
+    time_embedding,
 ) -> list[dict[str, float | int | None]]:
     y_eval = labels[eval_indices].astype(int)
     total_months = len(sequences_texts[0])
@@ -163,9 +207,11 @@ def _evaluate_e2e(
             author_ids=author_ids,
             sequences_texts=sequences_texts,
             labels=labels,
+            sequences_months=sequences_months,
             eval_indices=eval_indices,
             month_index=month_index,
             batch_size=batch_size,
+            time_embedding=time_embedding,
         )
         preds = (probs >= threshold).astype(int)
         tn, fp, fn, tp = _confusion_counts(y_eval, preds)
@@ -252,7 +298,7 @@ def run_train_e2e(config: TrainE2EConfig) -> dict[str, object]:
 
     device = torch.device("cpu")
 
-    authors, sequences_texts, labels = _prepare_dataset(Path(config.input_path))
+    authors, sequences_texts, sequences_months, labels = _prepare_dataset(Path(config.input_path))
     total_months = len(sequences_texts[0])
     if config.train_months >= total_months:
         raise ValueError(f"train_months must be < total months ({total_months})")
@@ -284,12 +330,26 @@ def run_train_e2e(config: TrainE2EConfig) -> dict[str, object]:
         layers=config.gru_layers,
         dropout=config.dropout,
     ).to(device)
+    time_embedding = _build_time_embedding(
+        torch=torch,
+        enabled=config.use_time_embeddings,
+        max_positions=total_months,
+        embedding_dim=encoder.output_dim,
+        device=device,
+    )
 
     parameters = list(head.parameters()) + list(
         parameter for parameter in encoder.parameters() if parameter.requires_grad
     )
+    if time_embedding is not None:
+        parameters.extend(time_embedding.parameters())
     optimizer = torch.optim.Adam(parameters, lr=config.lr)
-    criterion = torch.nn.BCEWithLogitsLoss()
+    criterion = build_binary_classification_loss(
+        loss_type=config.loss_type,
+        pos_weight=config.pos_weight,
+        focal_gamma=config.focal_gamma,
+        device=device,
+    )
 
     for epoch in range(config.epochs):
         head.train()
@@ -305,6 +365,7 @@ def run_train_e2e(config: TrainE2EConfig) -> dict[str, object]:
             batch_data = build_sequence_batch(
                 author_ids=authors,
                 sequences_texts=sequences_texts,
+                sequences_months=sequences_months,
                 labels=labels,
                 indices=batch,
                 max_months=config.train_months,
@@ -315,6 +376,11 @@ def run_train_e2e(config: TrainE2EConfig) -> dict[str, object]:
                 .unsqueeze(1)
             )
             embeddings = encoder.encode_sequences(batch_data.texts, device=device)
+            embeddings = _apply_time_embeddings(
+                embeddings=embeddings,
+                time_embedding=time_embedding,
+                month_indices=torch.from_numpy(batch_data.month_indices),
+            )
             logits = head(embeddings)
             loss = criterion(logits, labels_tensor)
 
@@ -345,6 +411,13 @@ def run_train_e2e(config: TrainE2EConfig) -> dict[str, object]:
             "dropout": float(config.dropout),
             "train_months": int(config.train_months),
             "model_type": "e2e_gru",
+            "use_time_embeddings": bool(config.use_time_embeddings),
+            "time_embedding_state_dict": (
+                time_embedding.state_dict() if time_embedding is not None else None
+            ),
+            "loss_type": config.loss_type,
+            "pos_weight": config.pos_weight,
+            "focal_gamma": float(config.focal_gamma),
         },
         model_path,
     )
@@ -356,10 +429,12 @@ def run_train_e2e(config: TrainE2EConfig) -> dict[str, object]:
         author_ids=authors,
         sequences_texts=sequences_texts,
         labels=labels,
+        sequences_months=sequences_months,
         eval_indices=eval_idx,
         train_months=config.train_months,
         batch_size=config.batch_size,
         threshold=0.5,
+        time_embedding=time_embedding,
     )
     metrics_path, metadata_path, per_month_csv_path, plot_paths = _save_eval_outputs(
         output_dir=output_dir,
@@ -373,6 +448,10 @@ def run_train_e2e(config: TrainE2EConfig) -> dict[str, object]:
     final_month = per_month[-1]
     return {
         "model_type": "e2e_gru",
+        "use_time_embeddings": bool(config.use_time_embeddings),
+        "loss_type": config.loss_type,
+        "pos_weight": config.pos_weight,
+        "focal_gamma": float(config.focal_gamma),
         "output_dir": str(output_dir),
         "model_path": str(model_path),
         "metrics_path": str(metrics_path),
@@ -392,7 +471,7 @@ def run_eval_e2e(config: EvalE2EConfig) -> dict[str, object]:
 
     device = torch.device("cpu")
 
-    authors, sequences_texts, labels = _prepare_dataset(Path(config.input_path))
+    authors, sequences_texts, sequences_months, labels = _prepare_dataset(Path(config.input_path))
     total_months = len(sequences_texts[0])
     if config.train_months >= total_months:
         raise ValueError(f"train_months must be < total months ({total_months})")
@@ -431,6 +510,23 @@ def run_eval_e2e(config: EvalE2EConfig) -> dict[str, object]:
     head_state = checkpoint.get("head_state_dict")
     if isinstance(head_state, dict):
         head.load_state_dict(head_state, strict=False)
+    time_embedding = None
+    checkpoint_loss_type = str(checkpoint.get("loss_type", "bce"))
+    checkpoint_pos_weight = checkpoint.get("pos_weight")
+    checkpoint_focal_gamma = float(checkpoint.get("focal_gamma", 2.0))
+    if bool(checkpoint.get("use_time_embeddings", False)):
+        time_state = checkpoint.get("time_embedding_state_dict")
+        if isinstance(time_state, dict) and "weight" in time_state:
+            max_positions, embedding_dim = map(int, time_state["weight"].shape)
+            time_embedding = _build_time_embedding(
+                torch=torch,
+                enabled=True,
+                max_positions=max_positions,
+                embedding_dim=embedding_dim,
+                device=device,
+            )
+            if time_embedding is not None:
+                time_embedding.load_state_dict(time_state)
 
     config_hash = config_sha256(config)[:8]
     run_stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
@@ -442,10 +538,12 @@ def run_eval_e2e(config: EvalE2EConfig) -> dict[str, object]:
         author_ids=authors,
         sequences_texts=sequences_texts,
         labels=labels,
+        sequences_months=sequences_months,
         eval_indices=eval_idx,
         train_months=config.train_months,
         batch_size=config.batch_size,
         threshold=config.threshold,
+        time_embedding=time_embedding,
     )
 
     model_copy_path = output_dir / "e2e_model.pt"
@@ -462,6 +560,10 @@ def run_eval_e2e(config: EvalE2EConfig) -> dict[str, object]:
     final_month = per_month[-1]
     return {
         "model_type": "e2e_gru",
+        "use_time_embeddings": bool(time_embedding is not None),
+        "loss_type": checkpoint_loss_type,
+        "pos_weight": checkpoint_pos_weight,
+        "focal_gamma": float(checkpoint_focal_gamma),
         "output_dir": str(output_dir),
         "model_path": str(model_copy_path),
         "metrics_path": str(metrics_path),

@@ -82,6 +82,7 @@ def test_eval_temporal_sweep_runs_and_aggregates(tmp_path, monkeypatch) -> None:
     for record in records:
         assert record["status"] == "ok"
         assert record["model_type"] == "gru"
+        assert isinstance(record["focal_gamma"], float)
         assert "seed" in record
         assert "final_month_index" in record
         assert "final_accuracy" in record

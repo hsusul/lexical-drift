@@ -56,10 +56,14 @@ class TemporalTransformer(nn.Module):
         layers: int = 1,
         heads: int = 4,
         dropout: float = 0.2,
+        use_time_embeddings: bool = True,
     ) -> None:
         super().__init__()
         self.input_projection = nn.Linear(input_dim, hidden_dim)
-        self.position_embedding = nn.Embedding(max_positions, hidden_dim)
+        self.use_time_embeddings = bool(use_time_embeddings)
+        self.position_embedding = (
+            nn.Embedding(max_positions, hidden_dim) if self.use_time_embeddings else None
+        )
         self.blocks = nn.ModuleList(
             [
                 _TemporalTransformerBlock(hidden_dim=hidden_dim, heads=heads, dropout=dropout)
@@ -73,11 +77,17 @@ class TemporalTransformer(nn.Module):
         x: torch.Tensor,
         *,
         return_attention: bool = False,
+        month_indices: torch.Tensor | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, list[torch.Tensor]]:
         batch_size, sequence_length, _ = x.shape
-        positions = torch.arange(sequence_length, device=x.device)
-        positions = positions.unsqueeze(0).expand(batch_size, sequence_length)
-        hidden = self.input_projection(x) + self.position_embedding(positions)
+        hidden = self.input_projection(x)
+        if self.use_time_embeddings and self.position_embedding is not None:
+            if month_indices is None:
+                positions = torch.arange(sequence_length, device=x.device)
+                positions = positions.unsqueeze(0).expand(batch_size, sequence_length)
+            else:
+                positions = month_indices.to(device=x.device, dtype=torch.long)
+            hidden = hidden + self.position_embedding(positions)
 
         attention_weights: list[torch.Tensor] = []
         for block in self.blocks:
@@ -99,6 +109,7 @@ def build_temporal_transformer(
     layers: int = 1,
     heads: int = 4,
     dropout: float = 0.2,
+    use_time_embeddings: bool = True,
 ) -> TemporalTransformer:
     return TemporalTransformer(
         input_dim=input_dim,
@@ -107,4 +118,5 @@ def build_temporal_transformer(
         layers=layers,
         heads=heads,
         dropout=dropout,
+        use_time_embeddings=use_time_embeddings,
     )

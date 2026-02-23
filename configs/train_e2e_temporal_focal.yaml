@@ -15,6 +15,6 @@ pooling: cls
 freeze_encoder: false
 pretrained_encoder_path: ""
 use_time_embeddings: true
-loss_type: bce
-pos_weight: null
+loss_type: focal
+pos_weight: 1.5
 focal_gamma: 2.0

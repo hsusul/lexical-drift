@@ -14,6 +14,7 @@ from lexical_drift.config import (
     load_eval_temporal_config,
     load_nn_train_config,
     load_pretrain_contrastive_config,
+    load_pretrain_temporal_order_config,
     load_temporal_train_config,
     load_train_config,
     load_train_e2e_config,
@@ -373,6 +374,13 @@ def eval_temporal(
     pred_counts = dict(result["final_month_pred_counts"])
     typer.echo(f"[eval-temporal] model_type={result['model_type']}")
     typer.echo(
+        "[eval-temporal] "
+        f"time_emb={result['use_time_embeddings']} "
+        f"loss={result['loss_type']} "
+        f"pos_weight={result['pos_weight']} "
+        f"focal_gamma={float(result['focal_gamma']):.2f}"
+    )
+    typer.echo(
         "[eval-temporal] threshold "
         f"mode={result['threshold_mode']} "
         f"metric={result['calibration_metric']} "
@@ -692,12 +700,20 @@ def eval_temporal_compare(
     typer.echo(
         "[eval-temporal-compare] "
         f"A model_type={summary_a['model_type']} "
+        f"time_emb={summary_a.get('use_time_embeddings')} "
+        f"loss={summary_a.get('loss_type')} "
+        f"pos_weight={summary_a.get('pos_weight')} "
+        f"focal_gamma={summary_a.get('focal_gamma')} "
         f"success={summary_a['success_count']}/{summary_a['total_runs']} "
         f"failed={summary_a['failure_count']}"
     )
     typer.echo(
         "[eval-temporal-compare] "
         f"B model_type={summary_b['model_type']} "
+        f"time_emb={summary_b.get('use_time_embeddings')} "
+        f"loss={summary_b.get('loss_type')} "
+        f"pos_weight={summary_b.get('pos_weight')} "
+        f"focal_gamma={summary_b.get('focal_gamma')} "
         f"success={summary_b['success_count']}/{summary_b['total_runs']} "
         f"failed={summary_b['failure_count']}"
     )
@@ -924,6 +940,13 @@ def train_e2e(
         f"accuracy={result['final_accuracy']:.4f} "
         f"f1={result['final_f1']:.4f}"
     )
+    typer.echo(
+        "[train-e2e] "
+        f"time_emb={result['use_time_embeddings']} "
+        f"loss={result['loss_type']} "
+        f"pos_weight={result['pos_weight']} "
+        f"focal_gamma={float(result['focal_gamma']):.2f}"
+    )
     typer.echo(f"[train-e2e] output_dir={result['output_dir']}")
     typer.echo(f"[train-e2e] model={result['model_path']}")
     typer.echo(f"[train-e2e] metrics={result['metrics_path']}")
@@ -953,6 +976,13 @@ def eval_e2e(
         f"month={result['final_month_index']} "
         f"accuracy={result['final_accuracy']:.4f} "
         f"f1={result['final_f1']:.4f}"
+    )
+    typer.echo(
+        "[eval-e2e] "
+        f"time_emb={result['use_time_embeddings']} "
+        f"loss={result['loss_type']} "
+        f"pos_weight={result['pos_weight']} "
+        f"focal_gamma={float(result['focal_gamma']):.2f}"
     )
     typer.echo(f"[eval-e2e] output_dir={result['output_dir']}")
     typer.echo(f"[eval-e2e] model={result['model_path']}")
@@ -987,6 +1017,35 @@ def pretrain_contrastive(
     typer.echo(f"[pretrain-contrastive] metadata={result['run_metadata_path']}")
 
 
+@app.command("pretrain-temporal-order")
+def pretrain_temporal_order(
+    config: Path = typer.Option(
+        Path("configs/pretrain_temporal_order.yaml"),
+        help="Path to temporal order pretraining config.",
+    ),
+) -> None:
+    has_torch = _dependency_available("torch")
+    has_transformers = _dependency_available("transformers")
+    if not has_torch or not has_transformers:
+        typer.echo("[pretrain-temporal-order] skipping (torch and/or transformers not installed)")
+        return
+
+    from lexical_drift.train.temporal_order_pretraining import run_pretrain_temporal_order
+
+    pretrain_config = load_pretrain_temporal_order_config(config)
+    result = run_pretrain_temporal_order(pretrain_config)
+    typer.echo(
+        "[pretrain-temporal-order] "
+        f"examples={result['n_examples']} "
+        f"final_loss={result['final_loss']:.4f} "
+        f"final_acc={result['final_accuracy']:.4f}"
+    )
+    typer.echo(f"[pretrain-temporal-order] output_dir={result['output_dir']}")
+    typer.echo(f"[pretrain-temporal-order] checkpoint={result['checkpoint_path']}")
+    typer.echo(f"[pretrain-temporal-order] metrics={result['metrics_path']}")
+    typer.echo(f"[pretrain-temporal-order] metadata={result['run_metadata_path']}")
+
+
 @app.command("train-multitask")
 def train_multitask(
     config: Path = typer.Option(
@@ -1010,6 +1069,13 @@ def train_multitask(
         f"accuracy={result['final_accuracy']:.4f} "
         f"f1={result['final_f1']:.4f} "
         f"bal_acc={result['final_balanced_accuracy']:.4f}"
+    )
+    typer.echo(
+        "[train-multitask] "
+        f"time_emb={result['use_time_embeddings']} "
+        f"loss={result['loss_type']} "
+        f"pos_weight={result['pos_weight']} "
+        f"focal_gamma={float(result['focal_gamma']):.2f}"
     )
     typer.echo(f"[train-multitask] output_dir={result['output_dir']}")
     typer.echo(f"[train-multitask] model={result['model_path']}")
@@ -1067,6 +1133,51 @@ def ablation_drift_weight(
     )
     typer.echo(f"[ablation-drift-weight] summary={result['summary_path']}")
     typer.echo(f"[ablation-drift-weight] plot={result['plot_path']}")
+
+
+@app.command("ablation-time-embeddings")
+def ablation_time_embeddings(
+    config: Path = typer.Option(
+        Path("configs/eval_temporal_transformer_time.yaml"),
+        help="Path to temporal evaluation config template.",
+    ),
+    seeds: str = typer.Option(
+        "",
+        help="Comma-separated seeds (e.g. 1,2,3). Overrides --n-seeds/--start-seed.",
+    ),
+    n_seeds: int = typer.Option(3, min=1, help="Number of sequential seeds to run."),
+    start_seed: int = typer.Option(1, help="Starting seed when --seeds is not provided."),
+    n_authors: int = typer.Option(50, min=1, help="Synthetic authors per seed."),
+    months: int = typer.Option(12, min=2, help="Synthetic months per author."),
+    difficulty: Difficulty = typer.Option(
+        Difficulty.hard,
+        help="Synthetic generation preset difficulty.",
+    ),
+    artifact_root: Path = typer.Option(
+        Path("artifacts"),
+        help="Root directory for ablation outputs.",
+    ),
+) -> None:
+    has_torch = _dependency_available("torch")
+    has_transformers = _dependency_available("transformers")
+    if not has_torch or not has_transformers:
+        typer.echo("[ablation-time-embeddings] skipping (torch and/or transformers not installed)")
+        return
+
+    from lexical_drift.eval.ablation_time_embeddings import run_ablation_time_embeddings
+
+    eval_template = load_eval_temporal_config(config)
+    seed_list = _resolve_seed_list(seeds, n_seeds, start_seed)
+    result = run_ablation_time_embeddings(
+        config_template=eval_template,
+        seeds=seed_list,
+        n_authors=n_authors,
+        months=months,
+        difficulty=difficulty.value,
+        artifact_root=artifact_root,
+    )
+    typer.echo(f"[ablation-time-embeddings] summary={result['summary_path']}")
+    typer.echo(f"[ablation-time-embeddings] plot={result['plot_path']}")
 
 
 @app.command("benchmark")
