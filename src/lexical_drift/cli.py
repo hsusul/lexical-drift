@@ -504,7 +504,9 @@ def eval_temporal_real(
     from lexical_drift.eval.eval_temporal import run_eval_temporal
 
     eval_config = load_eval_temporal_config(config)
-    if eval_config.model_type in {"gru", "attention"} and not _dependency_available("torch"):
+    if eval_config.model_type in {"gru", "attention", "transformer"} and not _dependency_available(
+        "torch"
+    ):
         typer.echo("[eval-temporal-real] skipping (torch not installed for temporal model_type)")
         return
 

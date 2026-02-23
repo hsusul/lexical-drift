@@ -281,8 +281,8 @@ def load_eval_temporal_config(path: str | Path) -> EvalTemporalConfig:
         raise ValueError("batch_size must be > 0")
     if config.train_months < 1:
         raise ValueError("train_months must be >= 1")
-    if config.model_type not in {"gru", "baseline_lr", "attention"}:
-        raise ValueError("model_type must be one of: gru, baseline_lr, attention")
+    if config.model_type not in {"gru", "baseline_lr", "attention", "transformer"}:
+        raise ValueError("model_type must be one of: gru, baseline_lr, attention, transformer")
     if config.gru_hidden_dim <= 0:
         raise ValueError("gru_hidden_dim must be > 0")
     if config.gru_layers <= 0:

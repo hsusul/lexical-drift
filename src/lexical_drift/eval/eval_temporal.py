@@ -306,6 +306,38 @@ def _save_eval_plots(
     }
 
 
+def _save_attention_over_time_plot(
+    *,
+    attention_over_time: list[np.ndarray],
+    month_indices: list[int],
+    output_dir: Path,
+) -> str | None:
+    if not attention_over_time:
+        return None
+
+    plt = _import_matplotlib_pyplot()
+    matrix = np.vstack(attention_over_time)
+    fig, ax = plt.subplots(figsize=(8, 4))
+    image = ax.imshow(
+        matrix,
+        aspect="auto",
+        interpolation="nearest",
+        cmap="viridis",
+    )
+    ax.set_xlabel("source month_index")
+    ax.set_ylabel("eval month_index")
+    ax.set_yticks(np.arange(len(month_indices)))
+    ax.set_yticklabels([str(value) for value in month_indices])
+    ax.set_title("Average final-token attention over time")
+    fig.colorbar(image, ax=ax, fraction=0.03, pad=0.04)
+    fig.tight_layout()
+
+    output_path = output_dir / "attention_over_time.png"
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+    return str(output_path)
+
+
 def _compute_embedding_drift_metrics(
     *,
     reference_month_embeddings: np.ndarray,
@@ -384,12 +416,14 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
     y_eval = labels[eval_idx].astype(int)
     output_dir = ensure_dir(config.output_dir)
 
-    if config.model_type in {"gru", "attention"}:
+    if config.model_type in {"gru", "attention", "transformer"}:
         torch, DataLoader, TensorDataset = _import_torch_modules()
         if config.model_type == "gru":
             from lexical_drift.models.temporal_gru import build_temporal_gru
-        else:
+        elif config.model_type == "attention":
             from lexical_drift.models.temporal_attention import build_temporal_attention
+        else:
+            from lexical_drift.models.temporal_transformer import build_temporal_transformer
 
         torch.manual_seed(config.random_seed)
         X_train = embeddings[train_idx, : config.train_months, :]
@@ -414,8 +448,17 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
                 layers=config.gru_layers,
                 dropout=config.dropout,
             )
-        else:
+        elif config.model_type == "attention":
             model = build_temporal_attention(
+                input_dim=input_dim,
+                hidden_dim=config.gru_hidden_dim,
+                max_positions=n_months,
+                layers=max(int(config.gru_layers), 1),
+                heads=4,
+                dropout=config.dropout,
+            )
+        else:
+            model = build_temporal_transformer(
                 input_dim=input_dim,
                 hidden_dim=config.gru_hidden_dim,
                 max_positions=n_months,
@@ -456,18 +499,33 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
             "train_months": int(config.train_months),
             "model_type": config.model_type,
         }
-        if config.model_type == "attention":
+        if config.model_type in {"attention", "transformer"}:
             model_payload["attention_layers"] = int(max(config.gru_layers, 1))
             model_payload["attention_heads"] = 4
             model_payload["max_positions"] = int(n_months)
         torch.save(model_payload, model_path)
 
-        def predict_probs(month_index: int) -> np.ndarray:
+        def predict_probs(month_index: int) -> tuple[np.ndarray, np.ndarray | None]:
             with torch.no_grad():
                 X_eval = embeddings[eval_idx, : month_index + 1, :]
+                if config.model_type == "transformer":
+                    logits, attention_layers = model(
+                        torch.from_numpy(X_eval),
+                        return_attention=True,
+                    )
+                    probs = torch.sigmoid(logits).squeeze(1).cpu().numpy().astype(np.float32)
+                    if attention_layers:
+                        # last layer attention: [batch, heads, tgt_len, src_len]
+                        attn_last = attention_layers[-1][:, :, -1, :]
+                        attn_summary = (
+                            attn_last.mean(dim=(0, 1)).detach().cpu().numpy().astype(np.float32)
+                        )
+                    else:
+                        attn_summary = None
+                    return probs, attn_summary
                 logits = model(torch.from_numpy(X_eval))
                 probs = torch.sigmoid(logits).squeeze(1).cpu().numpy()
-            return probs.astype(np.float32)
+            return probs.astype(np.float32), None
 
     elif config.model_type == "baseline_lr":
         X_train_flat = embeddings[train_idx, : config.train_months, :].reshape(-1, input_dim)
@@ -514,12 +572,12 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
             model_path,
         )
 
-        def predict_probs(month_index: int) -> np.ndarray:
+        def predict_probs(month_index: int) -> tuple[np.ndarray, np.ndarray | None]:
             X_eval = embeddings[eval_idx, month_index, :]
             if baseline_model is None:
-                return np.full(X_eval.shape[0], float(constant_prob), dtype=np.float32)
+                return np.full(X_eval.shape[0], float(constant_prob), dtype=np.float32), None
             probs = baseline_model.predict_proba(X_eval)[:, 1]
-            return np.asarray(probs, dtype=np.float32)
+            return np.asarray(probs, dtype=np.float32), None
 
     else:
         raise ValueError(f"Unsupported model_type: {config.model_type}")
@@ -527,12 +585,19 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
     per_month: list[dict[str, float | int | None]] = []
     final_month_probs: np.ndarray | None = None
     final_month_preds: np.ndarray | None = None
+    attention_over_time: list[np.ndarray] = []
+    attention_month_indices: list[int] = []
     chosen_threshold = float(config.fixed_threshold)
     calibrate_first_mode = config.threshold_mode == "calibrate_first_eval"
     calibrate_each_mode = config.threshold_mode == "calibrate_each_month"
     reference_month_embeddings = embeddings[eval_idx, config.train_months - 1, :]
     for month_index in range(config.train_months, n_months):
-        probs = predict_probs(month_index)
+        probs, month_attention = predict_probs(month_index)
+        if month_attention is not None:
+            padded_attention = np.full(n_months, np.nan, dtype=np.float64)
+            padded_attention[: month_index + 1] = month_attention.astype(np.float64)
+            attention_over_time.append(padded_attention)
+            attention_month_indices.append(int(month_index))
         threshold_used = chosen_threshold
         if calibrate_each_mode:
             threshold_used = choose_threshold(y_eval, probs, config.calibration_metric)
@@ -678,6 +743,13 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
     run_metadata_path = output_dir / "run_metadata.json"
     pd.DataFrame(per_month).to_csv(per_month_csv_path, index=False)
     plot_paths = _save_eval_plots(per_month=per_month, output_dir=output_dir)
+    attention_plot_path = _save_attention_over_time_plot(
+        attention_over_time=attention_over_time,
+        month_indices=attention_month_indices,
+        output_dir=output_dir,
+    )
+    if attention_plot_path is not None:
+        plot_paths["attention_over_time_path"] = attention_plot_path
     dataset_hash = file_sha256(data_path)
     config_hash = config_sha256(config)
     commit_hash = git_commit_hash()
