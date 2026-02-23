@@ -22,12 +22,15 @@ from lexical_drift.utils.metadata import config_sha256, file_sha256, git_commit_
 REQUIRED_COLUMNS = {"author_id", "month_index", "text", "drift_label"}
 
 
-def _import_torch():
+def _require_torch():
     try:
         import torch
         from torch import nn
     except ImportError as exc:
-        raise ImportError('PyTorch is required. Install with: pip install -e ".[dl]"') from exc
+        raise ImportError(
+            "PyTorch is required for multitask temporal features. "
+            'Install with: pip install -e ".[torch]"'
+        ) from exc
     return torch, nn
 
 
@@ -68,7 +71,7 @@ class MultiTaskTemporalHead:
         layers: int,
         dropout: float,
     ) -> None:
-        torch, nn = _import_torch()
+        torch, nn = _require_torch()
         _ = torch
         gru_dropout = dropout if layers > 1 else 0.0
         self.model = nn.ModuleDict(
@@ -115,7 +118,7 @@ class MultiTaskTemporalHead:
 
 
 def _drift_target_from_embeddings(embeddings, *, metric: str):
-    torch, _nn = _import_torch()
+    torch, _nn = _require_torch()
     reference = embeddings[:, 0, :]
     current = embeddings[:, -1, :]
     if metric == "cosine":
@@ -137,7 +140,7 @@ def _compute_per_month_metrics(
     batch_size: int,
     threshold: float,
 ) -> list[dict[str, float | int | None]]:
-    torch, _nn = _import_torch()
+    torch, _nn = _require_torch()
     y_eval = labels[eval_indices].astype(int)
     total_months = len(sequences_texts[0])
     per_month: list[dict[str, float | int | None]] = []
@@ -201,7 +204,7 @@ def _compute_per_month_metrics(
 
 def run_train_multitask(config: TrainMultiTaskConfig) -> dict[str, object]:
     np.random.seed(config.random_seed)
-    torch, _nn = _import_torch()
+    torch, _nn = _require_torch()
     torch.manual_seed(config.random_seed)
     device = torch.device("cpu")
 

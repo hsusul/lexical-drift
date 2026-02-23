@@ -1,7 +1,20 @@
 from __future__ import annotations
 
-import torch
-from torch.nn import functional as F
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import torch
+
+
+def _require_torch():
+    try:
+        import torch
+    except ImportError as exc:
+        raise ImportError(
+            'PyTorch is required for contrastive losses. '
+            'Install with: pip install -e ".[torch]"'
+        ) from exc
+    return torch
 
 
 def info_nce_loss(
@@ -10,6 +23,9 @@ def info_nce_loss(
     *,
     temperature: float,
 ) -> torch.Tensor:
+    torch = _require_torch()
+    F = torch.nn.functional
+
     if anchor_embeddings.ndim != 2 or positive_embeddings.ndim != 2:
         raise ValueError("anchor_embeddings and positive_embeddings must be 2D tensors")
     if anchor_embeddings.shape != positive_embeddings.shape:

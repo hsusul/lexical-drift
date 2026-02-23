@@ -15,24 +15,25 @@ from lexical_drift.datasets.e2e import build_sequence_batch
 from lexical_drift.datasets.temporal import build_author_sequences_with_months
 from lexical_drift.eval.eval_temporal import _save_eval_plots
 from lexical_drift.models.temporal_encoder import TemporalEncoder
-from lexical_drift.models.temporal_gru import build_temporal_gru
 from lexical_drift.utils import ensure_dir
 from lexical_drift.utils.metadata import config_sha256, file_sha256, git_commit_hash
 
 REQUIRED_COLUMNS = {"author_id", "month_index", "text", "drift_label"}
 
 
-def _import_torch():
+def _require_torch():
     try:
         import torch
     except ImportError as exc:
-        raise ImportError('PyTorch is required. Install with: pip install -e ".[dl]"') from exc
+        raise ImportError(
+            'PyTorch is required for e2e temporal features. Install with: pip install -e ".[torch]"'
+        ) from exc
     return torch
 
 
 def _set_seed(seed: int) -> None:
     np.random.seed(seed)
-    torch = _import_torch()
+    torch = _require_torch()
     torch.manual_seed(seed)
 
 
@@ -110,7 +111,7 @@ def _predict_probs_for_month(
     month_index: int,
     batch_size: int,
 ) -> np.ndarray:
-    torch = _import_torch()
+    torch = _require_torch()
     probs_parts: list[np.ndarray] = []
     head.eval()
     encoder.eval()
@@ -246,7 +247,9 @@ def _save_eval_outputs(
 
 def run_train_e2e(config: TrainE2EConfig) -> dict[str, object]:
     _set_seed(config.random_seed)
-    torch = _import_torch()
+    torch = _require_torch()
+    from lexical_drift.models.temporal_gru import build_temporal_gru
+
     device = torch.device("cpu")
 
     authors, sequences_texts, labels = _prepare_dataset(Path(config.input_path))
@@ -384,7 +387,9 @@ def run_train_e2e(config: TrainE2EConfig) -> dict[str, object]:
 
 def run_eval_e2e(config: EvalE2EConfig) -> dict[str, object]:
     _set_seed(config.random_seed)
-    torch = _import_torch()
+    torch = _require_torch()
+    from lexical_drift.models.temporal_gru import build_temporal_gru
+
     device = torch.device("cpu")
 
     authors, sequences_texts, labels = _prepare_dataset(Path(config.input_path))

@@ -9,6 +9,7 @@ import pytest
 from lexical_drift.config import EvalE2EConfig, TrainE2EConfig
 from lexical_drift.datasets.synthetic import save_synthetic_dataset
 from lexical_drift.train import e2e_temporal
+from tests._requires_torch import requires_torch
 
 
 def _hash_to_vector(text: str, dim: int = 32) -> np.ndarray:
@@ -20,6 +21,7 @@ def _hash_to_vector(text: str, dim: int = 32) -> np.ndarray:
     return np.tile(data, repeat)[:dim]
 
 
+@requires_torch
 def test_e2e_pipeline_smoke(tmp_path, monkeypatch) -> None:
     torch = pytest.importorskip("torch")
 

@@ -18,11 +18,14 @@ from lexical_drift.utils.metadata import config_sha256, file_sha256, git_commit_
 REQUIRED_COLUMNS = {"author_id", "month_index", "text", "drift_label"}
 
 
-def _import_torch():
+def _require_torch():
     try:
         import torch
     except ImportError as exc:
-        raise ImportError('PyTorch is required. Install with: pip install -e ".[dl]"') from exc
+        raise ImportError(
+            "PyTorch is required for contrastive pretraining. "
+            'Install with: pip install -e ".[torch]"'
+        ) from exc
     return torch
 
 
@@ -53,7 +56,7 @@ def _prepare_positive_pairs(
 
 def run_pretrain_contrastive(config: PretrainContrastiveConfig) -> dict[str, object]:
     np.random.seed(config.random_seed)
-    torch = _import_torch()
+    torch = _require_torch()
     torch.manual_seed(config.random_seed)
     device = torch.device("cpu")
 

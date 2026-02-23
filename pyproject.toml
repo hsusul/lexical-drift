@@ -29,6 +29,9 @@ dev = [
 dl = [
   "torch",
 ]
+torch = [
+  "torch",
+]
 nlp = [
   "transformers>=4.40",
 ]

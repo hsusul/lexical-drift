@@ -35,7 +35,7 @@ lexdrift generate-synth --out data/raw/synth_hard.csv --n-authors 80 --months 12
 ## Deep Learning Baseline
 
 ```bash
-pip install -e ".[dev,dl]"
+pip install -e ".[dev,torch]"
 lexdrift train-nn --config configs/train_nn.yaml
 ```
 
@@ -44,7 +44,7 @@ lexdrift train-nn --config configs/train_nn.yaml
 Encodes monthly writing with a frozen transformer and trains a GRU over time.
 
 ```bash
-pip install -e ".[dev,dl,nlp]"
+pip install -e ".[dev,torch,nlp]"
 lexdrift train-temporal --config configs/train_temporal.yaml
 ```
 
