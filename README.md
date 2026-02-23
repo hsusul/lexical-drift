@@ -81,6 +81,15 @@ lexdrift train-e2e --config configs/train_e2e_temporal.yaml
 lexdrift eval-e2e --config configs/eval_e2e_temporal.yaml
 ```
 
+## Contrastive Pretraining
+
+Pretrain the encoder with adjacent-month positives (InfoNCE), then use the checkpoint in
+`train-e2e` via `pretrained_encoder_path`:
+
+```bash
+lexdrift pretrain-contrastive --config configs/pretrain_contrastive.yaml
+```
+
 ## Benchmark
 
 Run repeated seed-based evaluation and compare baseline, NN, and temporal models:
@@ -147,6 +156,7 @@ lexdrift eval-temporal-sweep --seeds 1,2,3 --n-authors 80 --months 12
 lexdrift eval-temporal-compare --config-a configs/eval_temporal_fixed.yaml --config-b configs/eval_temporal_calib.yaml --seeds 1,2,3 --n-authors 50 --months 12 --difficulty hard
 lexdrift train-e2e --config configs/train_e2e_temporal.yaml
 lexdrift eval-e2e --config configs/eval_e2e_temporal.yaml
+lexdrift pretrain-contrastive --config configs/pretrain_contrastive.yaml
 lexdrift benchmark --seeds 1,2,3
 lexdrift predict --model artifacts/baseline.joblib --text "I keep using like filler words now"
 ```

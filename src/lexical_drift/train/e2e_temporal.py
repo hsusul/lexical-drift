@@ -408,6 +408,11 @@ def run_eval_e2e(config: EvalE2EConfig) -> dict[str, object]:
         pooling=config.pooling,
         freeze=True,
     ).to(device)
+    if config.pretrained_encoder_path:
+        pretrained = torch.load(config.pretrained_encoder_path, map_location=device)
+        pretrained_state = pretrained.get("encoder_state_dict")
+        if isinstance(pretrained_state, dict):
+            encoder.load_state_dict(pretrained_state, strict=False)
     encoder_state = checkpoint.get("encoder_state_dict")
     if isinstance(encoder_state, dict):
         encoder.load_state_dict(encoder_state, strict=False)

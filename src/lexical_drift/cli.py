@@ -13,6 +13,7 @@ from lexical_drift.config import (
     load_eval_e2e_config,
     load_eval_temporal_config,
     load_nn_train_config,
+    load_pretrain_contrastive_config,
     load_temporal_train_config,
     load_train_config,
     load_train_e2e_config,
@@ -933,6 +934,32 @@ def eval_e2e(
     typer.echo(f"[eval-e2e] metrics={result['metrics_path']}")
     typer.echo(f"[eval-e2e] per-month-csv={result['per_month_csv_path']}")
     typer.echo(f"[eval-e2e] metadata={result['run_metadata_path']}")
+
+
+@app.command("pretrain-contrastive")
+def pretrain_contrastive(
+    config: Path = typer.Option(
+        Path("configs/pretrain_contrastive.yaml"),
+        help="Path to temporal contrastive pretraining config.",
+    ),
+) -> None:
+    has_torch = _dependency_available("torch")
+    has_transformers = _dependency_available("transformers")
+    if not has_torch or not has_transformers:
+        typer.echo("[pretrain-contrastive] skipping (torch and/or transformers not installed)")
+        return
+
+    from lexical_drift.train.contrastive_temporal import run_pretrain_contrastive
+
+    pretrain_config = load_pretrain_contrastive_config(config)
+    result = run_pretrain_contrastive(pretrain_config)
+    typer.echo(
+        f"[pretrain-contrastive] pairs={result['n_pairs']} final_loss={result['final_loss']:.4f}"
+    )
+    typer.echo(f"[pretrain-contrastive] output_dir={result['output_dir']}")
+    typer.echo(f"[pretrain-contrastive] checkpoint={result['checkpoint_path']}")
+    typer.echo(f"[pretrain-contrastive] metrics={result['metrics_path']}")
+    typer.echo(f"[pretrain-contrastive] metadata={result['run_metadata_path']}")
 
 
 @app.command("benchmark")

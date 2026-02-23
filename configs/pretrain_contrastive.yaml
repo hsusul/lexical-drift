@@ -1,0 +1,13 @@
+input_path: data/raw/synth.csv
+output_dir: artifacts/contrastive
+random_seed: 42
+encoder_model: distilbert-base-uncased
+max_length: 128
+batch_size: 16
+lr: 0.0005
+epochs: 2
+temperature: 0.1
+projection_dim: 64
+train_months: 8
+pooling: cls
+freeze_encoder: false

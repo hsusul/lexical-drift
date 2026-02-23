@@ -9,3 +9,4 @@ checkpoint_path: artifacts/e2e/latest/e2e_model.pt
 test_size: 0.2
 pooling: cls
 threshold: 0.5
+pretrained_encoder_path: ""

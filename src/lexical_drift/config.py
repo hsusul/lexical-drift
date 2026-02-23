@@ -105,6 +105,24 @@ class EvalE2EConfig:
     test_size: float
     pooling: str = "cls"
     threshold: float = 0.5
+    pretrained_encoder_path: str = ""
+
+
+@dataclass(slots=True)
+class PretrainContrastiveConfig:
+    input_path: str
+    output_dir: str
+    random_seed: int
+    encoder_model: str
+    max_length: int
+    batch_size: int
+    lr: float
+    epochs: int
+    temperature: float
+    projection_dim: int
+    train_months: int
+    pooling: str = "cls"
+    freeze_encoder: bool = False
 
 
 def load_train_config(path: str | Path) -> TrainConfig:
@@ -445,6 +463,7 @@ def load_eval_e2e_config(path: str | Path) -> EvalE2EConfig:
         test_size=float(raw["test_size"]),
         pooling=str(raw.get("pooling", "cls")),
         threshold=float(raw.get("threshold", 0.5)),
+        pretrained_encoder_path=str(raw.get("pretrained_encoder_path", "")),
     )
 
     if not config.encoder_model.strip():
@@ -463,5 +482,66 @@ def load_eval_e2e_config(path: str | Path) -> EvalE2EConfig:
         raise ValueError("pooling must be one of: cls, mean")
     if not 0.0 < config.threshold < 1.0:
         raise ValueError("threshold must be between 0 and 1")
+
+    return config
+
+
+def load_pretrain_contrastive_config(path: str | Path) -> PretrainContrastiveConfig:
+    config_path = Path(path)
+    with config_path.open("r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f) or {}
+
+    required = {
+        "input_path",
+        "output_dir",
+        "random_seed",
+        "encoder_model",
+        "max_length",
+        "batch_size",
+        "lr",
+        "epochs",
+        "temperature",
+        "projection_dim",
+        "train_months",
+    }
+    missing = sorted(required - set(raw.keys()))
+    if missing:
+        missing_keys = ", ".join(missing)
+        raise ValueError(f"Missing config keys: {missing_keys}")
+
+    config = PretrainContrastiveConfig(
+        input_path=str(raw["input_path"]),
+        output_dir=str(raw["output_dir"]),
+        random_seed=int(raw["random_seed"]),
+        encoder_model=str(raw["encoder_model"]),
+        max_length=int(raw["max_length"]),
+        batch_size=int(raw["batch_size"]),
+        lr=float(raw["lr"]),
+        epochs=int(raw["epochs"]),
+        temperature=float(raw["temperature"]),
+        projection_dim=int(raw["projection_dim"]),
+        train_months=int(raw["train_months"]),
+        pooling=str(raw.get("pooling", "cls")),
+        freeze_encoder=bool(raw.get("freeze_encoder", False)),
+    )
+
+    if not config.encoder_model.strip():
+        raise ValueError("encoder_model must be non-empty")
+    if config.max_length <= 0:
+        raise ValueError("max_length must be > 0")
+    if config.batch_size <= 0:
+        raise ValueError("batch_size must be > 0")
+    if config.lr <= 0:
+        raise ValueError("lr must be > 0")
+    if config.epochs <= 0:
+        raise ValueError("epochs must be > 0")
+    if config.temperature <= 0:
+        raise ValueError("temperature must be > 0")
+    if config.projection_dim <= 0:
+        raise ValueError("projection_dim must be > 0")
+    if config.train_months < 1:
+        raise ValueError("train_months must be >= 1")
+    if config.pooling not in {"cls", "mean"}:
+        raise ValueError("pooling must be one of: cls, mean")
 
     return config
