@@ -26,6 +26,7 @@ artifacts/*
 data/raw/*.csv
 !data/raw/real_sample.csv
 data/processed/*.csv
+docs/report.md
 
 # OS
 .DS_Store
