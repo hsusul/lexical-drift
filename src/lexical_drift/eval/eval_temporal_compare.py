@@ -20,6 +20,9 @@ METRICS = (
     "pred_pos_rate",
     "true_pos_rate",
     "threshold_used",
+    "cosine_drift",
+    "l2_drift",
+    "variance_shift",
 )
 
 

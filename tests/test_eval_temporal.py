@@ -116,6 +116,7 @@ def test_eval_temporal_per_month_metrics_and_cache(tmp_path, monkeypatch) -> Non
     assert Path(str(plot_paths_payload["per_month_metrics_path"])).exists()
     assert Path(str(plot_paths_payload["threshold_over_time_path"])).exists()
     assert Path(str(plot_paths_payload["pred_rate_over_time_path"])).exists()
+    assert Path(str(plot_paths_payload["embedding_drift_over_time_path"])).exists()
 
     for month_entry in payload["per_month"]:
         assert "month_index" in month_entry
@@ -135,10 +136,16 @@ def test_eval_temporal_per_month_metrics_and_cache(tmp_path, monkeypatch) -> Non
         assert "fp" in month_entry
         assert "fn" in month_entry
         assert "tp" in month_entry
+        assert "cosine_drift" in month_entry
+        assert "l2_drift" in month_entry
+        assert "variance_shift" in month_entry
         roc_auc = month_entry["roc_auc"]
         pr_auc = month_entry["pr_auc"]
         assert roc_auc is None or isinstance(roc_auc, float)
         assert pr_auc is None or isinstance(pr_auc, float)
+        assert isinstance(month_entry["cosine_drift"], float)
+        assert isinstance(month_entry["l2_drift"], float)
+        assert isinstance(month_entry["variance_shift"], float)
 
     json.dumps(payload)
     json.dumps(first)
@@ -161,12 +168,16 @@ def test_eval_temporal_per_month_metrics_and_cache(tmp_path, monkeypatch) -> Non
     assert Path(str(plot_paths["per_month_metrics_path"])).exists()
     assert Path(str(plot_paths["threshold_over_time_path"])).exists()
     assert Path(str(plot_paths["pred_rate_over_time_path"])).exists()
+    assert Path(str(plot_paths["embedding_drift_over_time_path"])).exists()
     assert first["per_month"][0]["roc_auc"] is None or isinstance(
         first["per_month"][0]["roc_auc"], float
     )
     assert first["per_month"][0]["pr_auc"] is None or isinstance(
         first["per_month"][0]["pr_auc"], float
     )
+    assert isinstance(first["per_month"][0]["cosine_drift"], float)
+    assert isinstance(first["per_month"][0]["l2_drift"], float)
+    assert isinstance(first["per_month"][0]["variance_shift"], float)
 
     changed = eval_temporal.run_eval_temporal(replace(config, max_length=96))
     assert bool(changed["used_cache"]) is False
@@ -268,3 +279,4 @@ def test_eval_temporal_baseline_lr_and_plots(tmp_path, monkeypatch) -> None:
     assert Path(str(plot_paths["per_month_metrics_path"])).exists()
     assert Path(str(plot_paths["threshold_over_time_path"])).exists()
     assert Path(str(plot_paths["pred_rate_over_time_path"])).exists()
+    assert Path(str(plot_paths["embedding_drift_over_time_path"])).exists()

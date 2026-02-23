@@ -90,6 +90,9 @@ def _print_metric_summary(
         "pred_pos_rate",
         "true_pos_rate",
         "threshold_used",
+        "cosine_drift",
+        "l2_drift",
+        "variance_shift",
     ):
         text = _format_summary_stats(summary.get(metric))
         typer.echo(f"{prefix}   {metric:>13} {text}")
@@ -123,6 +126,9 @@ def _print_metric_delta(
         "pred_pos_rate",
         "true_pos_rate",
         "threshold_used",
+        "cosine_drift",
+        "l2_drift",
+        "variance_shift",
     ):
         typer.echo(f"{prefix}   {metric:>13} {_format_delta(delta.get(metric))}")
 
@@ -276,6 +282,21 @@ def eval_temporal(
         f"{per_month_summary['f1_mean']:.4f}/"
         f"{per_month_summary['f1_max']:.4f}"
     )
+    typer.echo(
+        "[eval-temporal] embedding drift "
+        f"cos(min/mean/max)="
+        f"{per_month_summary['cosine_drift_min']:.4f}/"
+        f"{per_month_summary['cosine_drift_mean']:.4f}/"
+        f"{per_month_summary['cosine_drift_max']:.4f} "
+        f"l2(min/mean/max)="
+        f"{per_month_summary['l2_drift_min']:.4f}/"
+        f"{per_month_summary['l2_drift_mean']:.4f}/"
+        f"{per_month_summary['l2_drift_max']:.4f} "
+        f"var_shift(min/mean/max)="
+        f"{per_month_summary['variance_shift_min']:.4f}/"
+        f"{per_month_summary['variance_shift_mean']:.4f}/"
+        f"{per_month_summary['variance_shift_max']:.4f}"
+    )
     threshold_values = np.asarray(
         [float(entry["threshold_used"]) for entry in result["per_month"]],
         dtype=np.float64,
@@ -318,6 +339,16 @@ def eval_temporal(
             f"{int(row['fp']):>2d} "
             f"{int(row['fn']):>2d} "
             f"{int(row['tp']):>2d}"
+        )
+    typer.echo("[eval-temporal] month  cos_drift l2_drift var_shift")
+    for entry in result["per_month"]:
+        row = dict(entry)
+        typer.echo(
+            "[eval-temporal] "
+            f"{int(row['month_index']):>5d} "
+            f"{float(row['cosine_drift']):>9.4f} "
+            f"{float(row['l2_drift']):>8.4f} "
+            f"{float(row['variance_shift']):>9.4f}"
         )
     typer.echo(
         "[eval-temporal] final confusion "

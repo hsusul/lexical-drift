@@ -186,7 +186,10 @@ def _import_matplotlib_pyplot():
     return plt
 
 
-def _series_from_per_month(per_month: list[dict[str, float | int]], key: str) -> np.ndarray:
+def _series_from_per_month(
+    per_month: list[dict[str, float | int | None]],
+    key: str,
+) -> np.ndarray:
     values: list[float] = []
     for entry in per_month:
         raw = entry.get(key)
@@ -196,7 +199,7 @@ def _series_from_per_month(per_month: list[dict[str, float | int]], key: str) ->
 
 def _save_eval_plots(
     *,
-    per_month: list[dict[str, float | int]],
+    per_month: list[dict[str, float | int | None]],
     output_dir: Path,
 ) -> dict[str, str]:
     plt = _import_matplotlib_pyplot()
@@ -253,10 +256,54 @@ def _save_eval_plots(
     fig.savefig(pred_rate_path, dpi=150)
     plt.close(fig)
 
+    drift_path = output_dir / "embedding_drift_over_time.png"
+    fig, ax = plt.subplots(figsize=(8, 4))
+    for metric_name in ("cosine_drift", "l2_drift", "variance_shift"):
+        values = _series_from_per_month(per_month, metric_name)
+        if np.isnan(values).all():
+            continue
+        ax.plot(months, values, marker="o", label=metric_name)
+    ax.set_xlabel("month_index")
+    ax.set_ylabel("drift")
+    ax.set_title("Embedding drift over time")
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(loc="best")
+    fig.tight_layout()
+    fig.savefig(drift_path, dpi=150)
+    plt.close(fig)
+
     return {
         "per_month_metrics_path": str(per_month_metrics_path),
         "threshold_over_time_path": str(threshold_path),
         "pred_rate_over_time_path": str(pred_rate_path),
+        "embedding_drift_over_time_path": str(drift_path),
+    }
+
+
+def _compute_embedding_drift_metrics(
+    *,
+    reference_month_embeddings: np.ndarray,
+    current_month_embeddings: np.ndarray,
+) -> dict[str, float]:
+    reference_mean = np.asarray(reference_month_embeddings.mean(axis=0), dtype=np.float64)
+    current_mean = np.asarray(current_month_embeddings.mean(axis=0), dtype=np.float64)
+    diff = reference_mean - current_mean
+
+    ref_norm = float(np.linalg.norm(reference_mean))
+    cur_norm = float(np.linalg.norm(current_mean))
+    if ref_norm > 0.0 and cur_norm > 0.0:
+        cosine_similarity = float(np.dot(reference_mean, current_mean) / (ref_norm * cur_norm))
+    else:
+        cosine_similarity = 1.0
+    cosine_drift = float(1.0 - cosine_similarity)
+    l2_drift = float(np.linalg.norm(diff))
+    reference_variance = float(np.var(reference_month_embeddings))
+    current_variance = float(np.var(current_month_embeddings))
+    variance_shift = float(abs(current_variance - reference_variance))
+    return {
+        "cosine_drift": cosine_drift,
+        "l2_drift": l2_drift,
+        "variance_shift": variance_shift,
     }
 
 
@@ -436,12 +483,13 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
     else:
         raise ValueError(f"Unsupported model_type: {config.model_type}")
 
-    per_month: list[dict[str, float | int]] = []
+    per_month: list[dict[str, float | int | None]] = []
     final_month_probs: np.ndarray | None = None
     final_month_preds: np.ndarray | None = None
     chosen_threshold = float(config.fixed_threshold)
     calibrate_first_mode = config.threshold_mode == "calibrate_first_eval"
     calibrate_each_mode = config.threshold_mode == "calibrate_each_month"
+    reference_month_embeddings = embeddings[eval_idx, config.train_months - 1, :]
     for month_index in range(config.train_months, n_months):
         probs = predict_probs(month_index)
         threshold_used = chosen_threshold
@@ -458,6 +506,11 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
         tp = int(np.sum((preds == 1) & (y_eval == 1)))
         month_metrics = _compute_binary_metrics(y_eval, preds)
         confusion_metrics = _compute_confusion_metrics(tn=tn, fp=fp, fn=fn, tp=tp)
+        current_month_embeddings = embeddings[eval_idx, month_index, :]
+        drift_metrics = _compute_embedding_drift_metrics(
+            reference_month_embeddings=reference_month_embeddings,
+            current_month_embeddings=current_month_embeddings,
+        )
         roc_auc: float | None = None
         pr_auc: float | None = None
         if np.unique(y_eval).size > 1:
@@ -482,6 +535,9 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
                 "fp": fp,
                 "fn": fn,
                 "tp": tp,
+                "cosine_drift": drift_metrics["cosine_drift"],
+                "l2_drift": drift_metrics["l2_drift"],
+                "variance_shift": drift_metrics["variance_shift"],
             }
         )
         final_month_probs = probs
@@ -499,6 +555,15 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
         [float(entry["accuracy"]) for entry in per_month], dtype=np.float64
     )
     f1_values = np.asarray([float(entry["f1"]) for entry in per_month], dtype=np.float64)
+    cosine_drift_values = np.asarray(
+        [float(entry["cosine_drift"]) for entry in per_month], dtype=np.float64
+    )
+    l2_drift_values = np.asarray(
+        [float(entry["l2_drift"]) for entry in per_month], dtype=np.float64
+    )
+    variance_shift_values = np.asarray(
+        [float(entry["variance_shift"]) for entry in per_month], dtype=np.float64
+    )
     per_month_summary = {
         "accuracy_min": float(accuracy_values.min()),
         "accuracy_mean": float(accuracy_values.mean()),
@@ -506,12 +571,27 @@ def run_eval_temporal(config: EvalTemporalConfig) -> dict[str, object]:
         "f1_min": float(f1_values.min()),
         "f1_mean": float(f1_values.mean()),
         "f1_max": float(f1_values.max()),
+        "cosine_drift_min": float(cosine_drift_values.min()),
+        "cosine_drift_mean": float(cosine_drift_values.mean()),
+        "cosine_drift_max": float(cosine_drift_values.max()),
+        "l2_drift_min": float(l2_drift_values.min()),
+        "l2_drift_mean": float(l2_drift_values.mean()),
+        "l2_drift_max": float(l2_drift_values.max()),
+        "variance_shift_min": float(variance_shift_values.min()),
+        "variance_shift_mean": float(variance_shift_values.mean()),
+        "variance_shift_max": float(variance_shift_values.max()),
     }
     summary = {
         "accuracy_mean": float(accuracy_values.mean()),
         "accuracy_std": float(accuracy_values.std()),
         "f1_mean": float(f1_values.mean()),
         "f1_std": float(f1_values.std()),
+        "cosine_drift_mean": float(cosine_drift_values.mean()),
+        "cosine_drift_std": float(cosine_drift_values.std()),
+        "l2_drift_mean": float(l2_drift_values.mean()),
+        "l2_drift_std": float(l2_drift_values.std()),
+        "variance_shift_mean": float(variance_shift_values.mean()),
+        "variance_shift_std": float(variance_shift_values.std()),
     }
     tp = int(np.sum((final_month_preds == 1) & (y_eval == 1)))
     fp = int(np.sum((final_month_preds == 1) & (y_eval == 0)))

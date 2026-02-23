@@ -95,6 +95,9 @@ def test_eval_temporal_sweep_runs_and_aggregates(tmp_path, monkeypatch) -> None:
             assert "recall" in month_entry
             assert "specificity" in month_entry
             assert "balanced_accuracy" in month_entry
+            assert "cosine_drift" in month_entry
+            assert "l2_drift" in month_entry
+            assert "variance_shift" in month_entry
 
     summary = aggregate_sweep_metrics(records)
     assert isinstance(summary, dict)
@@ -106,8 +109,12 @@ def test_eval_temporal_sweep_runs_and_aggregates(tmp_path, monkeypatch) -> None:
     assert isinstance(summary["final_month_summary"]["accuracy"], dict)
     assert isinstance(summary["all_eval_months_summary"]["f1"], dict)
     assert isinstance(summary["final_month_summary"]["balanced_accuracy"], dict)
+    assert isinstance(summary["final_month_summary"]["cosine_drift"], dict)
+    assert isinstance(summary["all_eval_months_summary"]["l2_drift"], dict)
+    assert isinstance(summary["all_eval_months_summary"]["variance_shift"], dict)
 
     run_dir = tmp_path / "artifacts" / "eval_sweep_runs" / "seed_1"
     assert (run_dir / "per_month_metrics.png").exists()
     assert (run_dir / "threshold_over_time.png").exists()
     assert (run_dir / "pred_rate_over_time.png").exists()
+    assert (run_dir / "embedding_drift_over_time.png").exists()

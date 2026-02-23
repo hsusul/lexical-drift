@@ -135,6 +135,9 @@ def test_eval_temporal_compare_summary_and_deltas(tmp_path, monkeypatch) -> None
             "pred_pos_rate",
             "true_pos_rate",
             "threshold_used",
+            "cosine_drift",
+            "l2_drift",
+            "variance_shift",
         ):
             assert metric in values
             metric_value = values[metric]
@@ -145,9 +148,11 @@ def test_eval_temporal_compare_summary_and_deltas(tmp_path, monkeypatch) -> None
     assert (plot_dir_a / "per_month_metrics.png").exists()
     assert (plot_dir_a / "threshold_over_time.png").exists()
     assert (plot_dir_a / "pred_rate_over_time.png").exists()
+    assert (plot_dir_a / "embedding_drift_over_time.png").exists()
     assert (plot_dir_b / "per_month_metrics.png").exists()
     assert (plot_dir_b / "threshold_over_time.png").exists()
     assert (plot_dir_b / "pred_rate_over_time.png").exists()
+    assert (plot_dir_b / "embedding_drift_over_time.png").exists()
 
 
 def test_eval_temporal_compare_reuses_shared_cache(tmp_path, monkeypatch) -> None:
