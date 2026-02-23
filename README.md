@@ -99,6 +99,15 @@ lexdrift train-multitask --config configs/train_multitask.yaml
 lexdrift ablation-drift-weight --lambdas 0,0.1,0.3,1.0 --seeds 1,2,3 --months 12
 ```
 
+## Real Dataset Preparation
+
+Normalize a local CSV/JSONL dataset to the expected schema, then run temporal evaluation:
+
+```bash
+lexdrift prepare-real --input data/raw/real_sample.csv --out data/processed/real.parquet
+lexdrift eval-temporal-real --dataset prepared_local --path data/processed/real.parquet --config configs/real_eval.yaml
+```
+
 ## Benchmark
 
 Run repeated seed-based evaluation and compare baseline, NN, and temporal models:
@@ -168,6 +177,8 @@ lexdrift eval-e2e --config configs/eval_e2e_temporal.yaml
 lexdrift pretrain-contrastive --config configs/pretrain_contrastive.yaml
 lexdrift train-multitask --config configs/train_multitask.yaml
 lexdrift ablation-drift-weight --lambdas 0,0.1,0.3,1.0 --seeds 1,2,3 --months 12
+lexdrift prepare-real --input data/raw/real_sample.csv --out data/processed/real.parquet
+lexdrift eval-temporal-real --dataset prepared_local --path data/processed/real.parquet --config configs/real_eval.yaml
 lexdrift benchmark --seeds 1,2,3
 lexdrift predict --model artifacts/baseline.joblib --text "I keep using like filler words now"
 ```

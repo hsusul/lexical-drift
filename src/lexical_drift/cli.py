@@ -502,7 +502,7 @@ def eval_temporal_real(
         help="Path to local real dataset CSV.",
     ),
     config: Path = typer.Option(
-        Path("configs/eval_temporal.yaml"),
+        Path("configs/real_eval.yaml"),
         help="Path to temporal evaluation config.",
     ),
 ) -> None:
@@ -540,6 +540,23 @@ def eval_temporal_real(
     typer.echo(f"[eval-temporal-real] model={result['model_path']}")
     if result["cache_path"]:
         typer.echo(f"[eval-temporal-real] cache={result['cache_path']}")
+
+
+@app.command("prepare-real")
+def prepare_real(
+    input: Path = typer.Option(
+        Path("data/raw/real_sample.csv"),
+        help="Input local dataset path (.csv or .jsonl).",
+    ),
+    out: Path = typer.Option(
+        Path("data/processed/real.parquet"),
+        help="Normalized output path (.parquet or .csv).",
+    ),
+) -> None:
+    from lexical_drift.datasets.real import prepare_real_dataset
+
+    output_path = prepare_real_dataset(input_path=input, out_path=out)
+    typer.echo(f"[prepare-real] wrote normalized dataset to {output_path}")
 
 
 @app.command("eval-temporal-sweep")
