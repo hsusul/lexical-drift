@@ -125,6 +125,28 @@ class PretrainContrastiveConfig:
     freeze_encoder: bool = False
 
 
+@dataclass(slots=True)
+class TrainMultiTaskConfig:
+    input_path: str
+    output_dir: str
+    random_seed: int
+    encoder_model: str
+    max_length: int
+    batch_size: int
+    train_months: int
+    hidden_dim: int
+    layers: int
+    dropout: float
+    lr: float
+    epochs: int
+    test_size: float
+    drift_lambda: float
+    drift_target_metric: str = "cosine"
+    pooling: str = "cls"
+    freeze_encoder: bool = False
+    threshold: float = 0.5
+
+
 def load_train_config(path: str | Path) -> TrainConfig:
     config_path = Path(path)
     with config_path.open("r", encoding="utf-8") as f:
@@ -543,5 +565,84 @@ def load_pretrain_contrastive_config(path: str | Path) -> PretrainContrastiveCon
         raise ValueError("train_months must be >= 1")
     if config.pooling not in {"cls", "mean"}:
         raise ValueError("pooling must be one of: cls, mean")
+
+    return config
+
+
+def load_train_multitask_config(path: str | Path) -> TrainMultiTaskConfig:
+    config_path = Path(path)
+    with config_path.open("r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f) or {}
+
+    required = {
+        "input_path",
+        "output_dir",
+        "random_seed",
+        "encoder_model",
+        "max_length",
+        "batch_size",
+        "train_months",
+        "hidden_dim",
+        "layers",
+        "dropout",
+        "lr",
+        "epochs",
+        "test_size",
+        "drift_lambda",
+    }
+    missing = sorted(required - set(raw.keys()))
+    if missing:
+        missing_keys = ", ".join(missing)
+        raise ValueError(f"Missing config keys: {missing_keys}")
+
+    config = TrainMultiTaskConfig(
+        input_path=str(raw["input_path"]),
+        output_dir=str(raw["output_dir"]),
+        random_seed=int(raw["random_seed"]),
+        encoder_model=str(raw["encoder_model"]),
+        max_length=int(raw["max_length"]),
+        batch_size=int(raw["batch_size"]),
+        train_months=int(raw["train_months"]),
+        hidden_dim=int(raw["hidden_dim"]),
+        layers=int(raw["layers"]),
+        dropout=float(raw["dropout"]),
+        lr=float(raw["lr"]),
+        epochs=int(raw["epochs"]),
+        test_size=float(raw["test_size"]),
+        drift_lambda=float(raw["drift_lambda"]),
+        drift_target_metric=str(raw.get("drift_target_metric", "cosine")),
+        pooling=str(raw.get("pooling", "cls")),
+        freeze_encoder=bool(raw.get("freeze_encoder", False)),
+        threshold=float(raw.get("threshold", 0.5)),
+    )
+
+    if not config.encoder_model.strip():
+        raise ValueError("encoder_model must be non-empty")
+    if config.max_length <= 0:
+        raise ValueError("max_length must be > 0")
+    if config.batch_size <= 0:
+        raise ValueError("batch_size must be > 0")
+    if config.train_months < 1:
+        raise ValueError("train_months must be >= 1")
+    if config.hidden_dim <= 0:
+        raise ValueError("hidden_dim must be > 0")
+    if config.layers <= 0:
+        raise ValueError("layers must be > 0")
+    if not 0.0 <= config.dropout < 1.0:
+        raise ValueError("dropout must be in [0, 1)")
+    if config.lr <= 0:
+        raise ValueError("lr must be > 0")
+    if config.epochs <= 0:
+        raise ValueError("epochs must be > 0")
+    if not 0.0 < config.test_size < 1.0:
+        raise ValueError("test_size must be between 0 and 1")
+    if config.drift_lambda < 0:
+        raise ValueError("drift_lambda must be >= 0")
+    if config.drift_target_metric not in {"cosine", "l2"}:
+        raise ValueError("drift_target_metric must be one of: cosine, l2")
+    if config.pooling not in {"cls", "mean"}:
+        raise ValueError("pooling must be one of: cls, mean")
+    if not 0.0 < config.threshold < 1.0:
+        raise ValueError("threshold must be between 0 and 1")
 
     return config

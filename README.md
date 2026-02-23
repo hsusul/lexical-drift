@@ -90,6 +90,15 @@ Pretrain the encoder with adjacent-month positives (InfoNCE), then use the check
 lexdrift pretrain-contrastive --config configs/pretrain_contrastive.yaml
 ```
 
+## Multitask Temporal Training
+
+Train a joint classifier + drift regressor and run drift-weight ablations:
+
+```bash
+lexdrift train-multitask --config configs/train_multitask.yaml
+lexdrift ablation-drift-weight --lambdas 0,0.1,0.3,1.0 --seeds 1,2,3 --months 12
+```
+
 ## Benchmark
 
 Run repeated seed-based evaluation and compare baseline, NN, and temporal models:
@@ -157,6 +166,8 @@ lexdrift eval-temporal-compare --config-a configs/eval_temporal_fixed.yaml --con
 lexdrift train-e2e --config configs/train_e2e_temporal.yaml
 lexdrift eval-e2e --config configs/eval_e2e_temporal.yaml
 lexdrift pretrain-contrastive --config configs/pretrain_contrastive.yaml
+lexdrift train-multitask --config configs/train_multitask.yaml
+lexdrift ablation-drift-weight --lambdas 0,0.1,0.3,1.0 --seeds 1,2,3 --months 12
 lexdrift benchmark --seeds 1,2,3
 lexdrift predict --model artifacts/baseline.joblib --text "I keep using like filler words now"
 ```

@@ -17,6 +17,7 @@ from lexical_drift.config import (
     load_temporal_train_config,
     load_train_config,
     load_train_e2e_config,
+    load_train_multitask_config,
 )
 from lexical_drift.datasets.synthetic import save_synthetic_dataset
 from lexical_drift.inference.predict import predict_text
@@ -56,6 +57,13 @@ def _parse_int_list(raw: str, *, name: str) -> list[int]:
 
 def _parse_str_list(raw: str, *, name: str) -> list[str]:
     values = [part.strip() for part in raw.split(",") if part.strip()]
+    if not values:
+        raise ValueError(f"No valid values provided via --{name}")
+    return values
+
+
+def _parse_float_list(raw: str, *, name: str) -> list[float]:
+    values = [float(part.strip()) for part in raw.split(",") if part.strip()]
     if not values:
         raise ValueError(f"No valid values provided via --{name}")
     return values
@@ -960,6 +968,88 @@ def pretrain_contrastive(
     typer.echo(f"[pretrain-contrastive] checkpoint={result['checkpoint_path']}")
     typer.echo(f"[pretrain-contrastive] metrics={result['metrics_path']}")
     typer.echo(f"[pretrain-contrastive] metadata={result['run_metadata_path']}")
+
+
+@app.command("train-multitask")
+def train_multitask(
+    config: Path = typer.Option(
+        Path("configs/train_multitask.yaml"),
+        help="Path to multitask temporal training config.",
+    ),
+) -> None:
+    has_torch = _dependency_available("torch")
+    has_transformers = _dependency_available("transformers")
+    if not has_torch or not has_transformers:
+        typer.echo("[train-multitask] skipping (torch and/or transformers not installed)")
+        return
+
+    from lexical_drift.train.multitask_temporal import run_train_multitask
+
+    train_config = load_train_multitask_config(config)
+    result = run_train_multitask(train_config)
+    typer.echo(
+        "[train-multitask] "
+        f"month={result['final_month_index']} "
+        f"accuracy={result['final_accuracy']:.4f} "
+        f"f1={result['final_f1']:.4f} "
+        f"bal_acc={result['final_balanced_accuracy']:.4f}"
+    )
+    typer.echo(f"[train-multitask] output_dir={result['output_dir']}")
+    typer.echo(f"[train-multitask] model={result['model_path']}")
+    typer.echo(f"[train-multitask] metrics={result['metrics_path']}")
+    typer.echo(f"[train-multitask] per-month-csv={result['per_month_csv_path']}")
+    typer.echo(f"[train-multitask] metadata={result['run_metadata_path']}")
+
+
+@app.command("ablation-drift-weight")
+def ablation_drift_weight(
+    config: Path = typer.Option(
+        Path("configs/train_multitask.yaml"),
+        help="Path to multitask temporal training config template.",
+    ),
+    lambdas: str = typer.Option(
+        "0,0.1,0.3,1.0",
+        help="Comma-separated drift loss weights.",
+    ),
+    seeds: str = typer.Option(
+        "",
+        help="Comma-separated seeds (e.g. 1,2,3). Overrides --n-seeds/--start-seed.",
+    ),
+    n_seeds: int = typer.Option(3, min=1, help="Number of sequential seeds to run."),
+    start_seed: int = typer.Option(1, help="Starting seed when --seeds is not provided."),
+    n_authors: int = typer.Option(50, min=1, help="Synthetic authors per seed."),
+    months: int = typer.Option(12, min=2, help="Synthetic months per author."),
+    difficulty: Difficulty = typer.Option(
+        Difficulty.hard,
+        help="Synthetic generation preset difficulty.",
+    ),
+    artifact_root: Path = typer.Option(
+        Path("artifacts"),
+        help="Root directory for ablation outputs.",
+    ),
+) -> None:
+    has_torch = _dependency_available("torch")
+    has_transformers = _dependency_available("transformers")
+    if not has_torch or not has_transformers:
+        typer.echo("[ablation-drift-weight] skipping (torch and/or transformers not installed)")
+        return
+
+    from lexical_drift.train.multitask_temporal import run_ablation_drift_weight
+
+    train_config = load_train_multitask_config(config)
+    lambda_values = _parse_float_list(lambdas, name="lambdas")
+    seed_list = _resolve_seed_list(seeds, n_seeds, start_seed)
+    result = run_ablation_drift_weight(
+        config_template=train_config,
+        lambdas=lambda_values,
+        seeds=seed_list,
+        n_authors=n_authors,
+        months=months,
+        difficulty=difficulty.value,
+        artifact_root=artifact_root,
+    )
+    typer.echo(f"[ablation-drift-weight] summary={result['summary_path']}")
+    typer.echo(f"[ablation-drift-weight] plot={result['plot_path']}")
 
 
 @app.command("benchmark")
