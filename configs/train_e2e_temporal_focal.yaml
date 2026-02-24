@@ -9,12 +9,14 @@ gru_hidden_dim: 128
 gru_layers: 1
 dropout: 0.2
 lr: 0.0005
-epochs: 2
+epochs: 15
 test_size: 0.2
 pooling: cls
 freeze_encoder: false
 pretrained_encoder_path: ""
 use_time_embeddings: true
 loss_type: focal
-pos_weight: 1.5
+pos_weight: 2.0
 focal_gamma: 2.0
+train_eval_threshold_mode: fixed
+train_eval_calibration_metric: f1

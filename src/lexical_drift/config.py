@@ -98,6 +98,8 @@ class TrainE2EConfig:
     loss_type: str = "bce"
     pos_weight: float | None = None
     focal_gamma: float = 2.0
+    train_eval_threshold_mode: str = "fixed"
+    train_eval_calibration_metric: str = "f1"
 
 
 @dataclass(slots=True)
@@ -116,6 +118,9 @@ class EvalE2EConfig:
     threshold_mode: str = "fixed"
     calibration_metric: str = "balanced_accuracy"
     fixed_threshold: float = 0.5
+    threshold_min: float = 0.05
+    threshold_max: float = 0.95
+    n_thresholds: int = 101
     pretrained_encoder_path: str = ""
 
 
@@ -469,6 +474,8 @@ def load_train_e2e_config(path: str | Path) -> TrainE2EConfig:
         loss_type=str(raw.get("loss_type", "bce")),
         pos_weight=None if raw.get("pos_weight") is None else float(raw["pos_weight"]),
         focal_gamma=float(raw.get("focal_gamma", 2.0)),
+        train_eval_threshold_mode=str(raw.get("train_eval_threshold_mode", "fixed")),
+        train_eval_calibration_metric=str(raw.get("train_eval_calibration_metric", "f1")),
     )
 
     if not config.encoder_model.strip():
@@ -499,6 +506,12 @@ def load_train_e2e_config(path: str | Path) -> TrainE2EConfig:
         raise ValueError("pos_weight must be > 0 when provided")
     if config.focal_gamma < 0:
         raise ValueError("focal_gamma must be >= 0")
+    if config.train_eval_threshold_mode not in {"fixed", "calibrate_on_val"}:
+        raise ValueError("train_eval_threshold_mode must be one of: fixed, calibrate_on_val")
+    if config.train_eval_calibration_metric not in {"youden_j", "f1", "balanced_accuracy"}:
+        raise ValueError(
+            "train_eval_calibration_metric must be one of: youden_j, f1, balanced_accuracy"
+        )
 
     return config
 
@@ -538,6 +551,9 @@ def load_eval_e2e_config(path: str | Path) -> EvalE2EConfig:
         threshold_mode=str(raw.get("threshold_mode", "fixed")),
         calibration_metric=str(raw.get("calibration_metric", "balanced_accuracy")),
         fixed_threshold=float(raw.get("fixed_threshold", raw.get("threshold", 0.5))),
+        threshold_min=float(raw.get("threshold_min", 0.05)),
+        threshold_max=float(raw.get("threshold_max", 0.95)),
+        n_thresholds=int(raw.get("n_thresholds", 101)),
         pretrained_encoder_path=str(raw.get("pretrained_encoder_path", "")),
     )
 
@@ -561,6 +577,14 @@ def load_eval_e2e_config(path: str | Path) -> EvalE2EConfig:
         raise ValueError("calibration_metric must be one of: youden_j, f1, balanced_accuracy")
     if not 0.0 < config.fixed_threshold < 1.0:
         raise ValueError("fixed_threshold must be between 0 and 1")
+    if not 0.0 <= config.threshold_min < 1.0:
+        raise ValueError("threshold_min must be in [0, 1)")
+    if not 0.0 < config.threshold_max <= 1.0:
+        raise ValueError("threshold_max must be in (0, 1]")
+    if config.threshold_min >= config.threshold_max:
+        raise ValueError("threshold_min must be < threshold_max")
+    if config.n_thresholds < 2:
+        raise ValueError("n_thresholds must be >= 2")
 
     return config
 

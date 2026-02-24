@@ -104,6 +104,9 @@ lexdrift eval-e2e --config configs/eval_e2e_temporal.yaml --use-latest
 lexdrift eval-e2e --config configs/eval_e2e_temporal_calib.yaml --use-latest
 ```
 
+Calibration guardrails are controlled by:
+`threshold_min`, `threshold_max`, and `n_thresholds`.
+
 Repeated-seed e2e evaluation summary:
 
 ```bash
@@ -112,6 +115,11 @@ lexdrift eval-e2e-sweep \
   --eval-config configs/eval_e2e_temporal_calib.yaml \
   --seeds 1,2,3 --n-authors 50 --months 12 --difficulty hard
 ```
+
+`eval-e2e` writes calibration and probability diagnostics in each run directory:
+- `val_threshold_curve.json` and `val_threshold_curve.png`
+- `val_prob_hist.png`, `test_prob_hist.png`
+- `val_prob_summary.json`, `test_prob_summary.json`
 
 ## Contrastive Pretraining
 

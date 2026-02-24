@@ -24,6 +24,7 @@ SUMMARY_METRICS = (
     "pr_auc",
     "pred_pos_rate",
     "true_pos_rate",
+    "threshold_used",
 )
 
 
@@ -97,6 +98,7 @@ def _write_e2e_sweep_csv(path: Path, records: list[dict[str, object]]) -> None:
                 "calibration_metric": record.get("calibration_metric"),
                 "fixed_threshold": record.get("fixed_threshold"),
                 "chosen_threshold": record.get("chosen_threshold"),
+                "final_month_threshold_used": record.get("final_month_threshold_used"),
                 "checkpoint_path": record.get("checkpoint_path"),
                 "metrics_path": record.get("metrics_path"),
                 "model_path": record.get("model_path"),
@@ -155,6 +157,11 @@ def run_eval_e2e_sweep(
                 checkpoint_path=str(train_result["model_path"]),
             )
             eval_result = run_eval_e2e(eval_config)
+            final_month_metrics = dict(eval_result["per_month"][-1])
+            final_threshold_used = _as_float(final_month_metrics.get("threshold_used"))
+            if final_threshold_used is None:
+                final_threshold_used = float(eval_result["chosen_threshold"])
+            final_month_metrics["threshold_used"] = float(final_threshold_used)
             record: dict[str, object] = {
                 "seed": seed_int,
                 "status": "ok",
@@ -163,7 +170,7 @@ def run_eval_e2e_sweep(
                 "final_month_index": int(eval_result["final_month_index"]),
                 "final_accuracy": float(eval_result["final_accuracy"]),
                 "final_f1": float(eval_result["final_f1"]),
-                "final_month_metrics": dict(eval_result["per_month"][-1]),
+                "final_month_metrics": final_month_metrics,
                 "use_time_embeddings": bool(eval_result["use_time_embeddings"]),
                 "loss_type": str(eval_result["loss_type"]),
                 "pos_weight": eval_result["pos_weight"],
@@ -172,6 +179,7 @@ def run_eval_e2e_sweep(
                 "calibration_metric": str(eval_result["calibration_metric"]),
                 "fixed_threshold": float(eval_result["fixed_threshold"]),
                 "chosen_threshold": float(eval_result["chosen_threshold"]),
+                "final_month_threshold_used": float(final_threshold_used),
                 "checkpoint_path": str(eval_result["checkpoint_path"]),
                 "model_path": str(eval_result["model_path"]),
                 "metrics_path": str(eval_result["metrics_path"]),

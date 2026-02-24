@@ -953,6 +953,15 @@ def train_e2e(
     typer.echo(f"[train-e2e] per-month-csv={result['per_month_csv_path']}")
     typer.echo(f"[train-e2e] metadata={result['run_metadata_path']}")
     typer.echo(f"[train-e2e] latest-pointer={result['latest_pointer_path']}")
+    if result["calibrated_threshold"] is not None:
+        typer.echo(
+            "[train-e2e] "
+            f"calibrated_threshold={float(result['calibrated_threshold']):.4f} "
+            f"calibrated_f1={float(result['calibrated_f1']):.4f} "
+            f"calibrated_precision={float(result['calibrated_precision']):.4f} "
+            f"calibrated_recall={float(result['calibrated_recall']):.4f} "
+            f"pred_pos_rate={float(result['calibrated_pred_pos_rate']):.4f}"
+        )
 
 
 @app.command("eval-e2e")
@@ -985,6 +994,11 @@ def eval_e2e(
         f"month={result['final_month_index']} "
         f"accuracy={result['final_accuracy']:.4f} "
         f"f1={result['final_f1']:.4f}"
+    )
+    typer.echo(
+        "[eval-e2e] "
+        f"brier={float(result['final_brier_score']):.4f} "
+        f"ece={float(result['final_ece']):.4f}"
     )
     typer.echo(
         "[eval-e2e] "

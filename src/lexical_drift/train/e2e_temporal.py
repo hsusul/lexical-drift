@@ -4,6 +4,7 @@ import json
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -149,19 +150,42 @@ def _compute_confusion_metrics(tn: int, fp: int, fn: int, tp: int) -> dict[str, 
     }
 
 
-def _metric_for_threshold(
+def _import_matplotlib_pyplot():
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError as exc:
+        raise ImportError(
+            "matplotlib is required for e2e diagnostics plots. Install with: pip install matplotlib"
+        ) from exc
+    return plt
+
+
+def _build_threshold_grid(
     *,
-    y_true: np.ndarray,
-    probs: np.ndarray,
-    threshold: float,
+    threshold_min: float,
+    threshold_max: float,
+    n_thresholds: int,
+) -> np.ndarray:
+    return np.linspace(threshold_min, threshold_max, int(n_thresholds), dtype=np.float64)
+
+
+def _metric_value_from_confusion(
+    *,
+    tn: int,
+    fp: int,
+    fn: int,
+    tp: int,
     metric: str,
 ) -> float:
-    preds = (probs >= threshold).astype(int)
-    tn, fp, fn, tp = _confusion_counts(y_true, preds)
+    precision = float(tp / (tp + fp)) if (tp + fp) > 0 else 0.0
     recall = float(tp / (tp + fn)) if (tp + fn) > 0 else 0.0
     specificity = float(tn / (tn + fp)) if (tn + fp) > 0 else 0.0
     if metric == "f1":
-        return float(f1_score(y_true, preds, zero_division=0))
+        den = precision + recall
+        return float(2.0 * precision * recall / den) if den > 0 else 0.0
     if metric == "balanced_accuracy":
         return float(0.5 * (recall + specificity))
     if metric == "youden_j":
@@ -170,36 +194,194 @@ def _metric_for_threshold(
     raise ValueError(f"Unsupported calibration_metric: {metric}")
 
 
+def _compute_threshold_curve(
+    *,
+    y_true: np.ndarray,
+    probs: np.ndarray,
+    thresholds: np.ndarray,
+) -> dict[str, Any]:
+    f1_values: list[float] = []
+    precision_values: list[float] = []
+    recall_values: list[float] = []
+    balanced_accuracy_values: list[float] = []
+    youden_j_values: list[float] = []
+
+    for threshold in thresholds:
+        preds = (probs >= float(threshold)).astype(int)
+        tn, fp, fn, tp = _confusion_counts(y_true, preds)
+        confusion = _compute_confusion_metrics(tn, fp, fn, tp)
+        precision_values.append(float(confusion["precision"]))
+        recall_values.append(float(confusion["recall"]))
+        balanced_accuracy_values.append(float(confusion["balanced_accuracy"]))
+        f1_values.append(float(f1_score(y_true, preds, zero_division=0)))
+        youden_j_values.append(
+            _metric_value_from_confusion(tn=tn, fp=fp, fn=fn, tp=tp, metric="youden_j")
+        )
+
+    return {
+        "thresholds": [float(value) for value in thresholds.tolist()],
+        "f1": f1_values,
+        "precision": precision_values,
+        "recall": recall_values,
+        "balanced_accuracy": balanced_accuracy_values,
+        "youden_j": youden_j_values,
+    }
+
+
+def _choose_threshold_from_curve(
+    *,
+    threshold_curve: dict[str, Any],
+    calibration_metric: str,
+) -> tuple[float, float]:
+    thresholds = np.asarray(threshold_curve["thresholds"], dtype=np.float64)
+    metric_values = np.asarray(threshold_curve[calibration_metric], dtype=np.float64)
+    if thresholds.size == 0 or metric_values.size == 0:
+        return 0.5, 0.0
+
+    max_value = float(metric_values.max())
+    candidate_indices = np.where(np.isclose(metric_values, max_value))[0]
+    if candidate_indices.size == 0:
+        best_index = int(np.argmax(metric_values))
+    else:
+        candidate_thresholds = thresholds[candidate_indices]
+        best_index = int(candidate_indices[np.argmin(np.abs(candidate_thresholds - 0.5))])
+    return float(thresholds[best_index]), float(metric_values[best_index])
+
+
+def _plot_threshold_curve(
+    *,
+    threshold_curve: dict[str, Any],
+    output_path: Path,
+) -> None:
+    plt = _import_matplotlib_pyplot()
+    thresholds = np.asarray(threshold_curve["thresholds"], dtype=np.float64)
+    f1_values = np.asarray(threshold_curve["f1"], dtype=np.float64)
+    balanced_accuracy = np.asarray(threshold_curve["balanced_accuracy"], dtype=np.float64)
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.plot(thresholds, f1_values, label="f1", linewidth=2.0)
+    ax.plot(thresholds, balanced_accuracy, label="balanced_accuracy", linewidth=2.0)
+    ax.set_xlabel("threshold")
+    ax.set_ylabel("score")
+    ax.set_ylim(0.0, 1.0)
+    ax.set_title("Validation threshold curve")
+    ax.legend(loc="best")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
+
+def _probability_summary(probs: np.ndarray) -> dict[str, float | None]:
+    quantiles = {
+        "p01": 0.01,
+        "p05": 0.05,
+        "p10": 0.10,
+        "p25": 0.25,
+        "p50": 0.50,
+        "p75": 0.75,
+        "p90": 0.90,
+        "p95": 0.95,
+        "p99": 0.99,
+    }
+    if probs.size == 0:
+        payload: dict[str, float | None] = {key: None for key in quantiles}
+        payload["mean"] = None
+        payload["std"] = None
+        return payload
+    payload = {key: float(np.quantile(probs, q)) for key, q in quantiles.items()}
+    payload["mean"] = float(np.mean(probs))
+    payload["std"] = float(np.std(probs))
+    return payload
+
+
+def _plot_probability_histogram(
+    *,
+    probs: np.ndarray,
+    title: str,
+    output_path: Path,
+) -> None:
+    plt = _import_matplotlib_pyplot()
+    fig, ax = plt.subplots(figsize=(8, 4))
+    if probs.size > 0:
+        ax.hist(probs, bins=20, range=(0.0, 1.0), alpha=0.8)
+    ax.set_xlim(0.0, 1.0)
+    ax.set_xlabel("predicted probability")
+    ax.set_ylabel("count")
+    ax.set_title(title)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
+
+def _brier_score(y_true: np.ndarray, probs: np.ndarray) -> float:
+    if probs.size == 0:
+        return 0.0
+    return float(np.mean((probs - y_true.astype(np.float32)) ** 2))
+
+
+def _expected_calibration_error(
+    *,
+    y_true: np.ndarray,
+    probs: np.ndarray,
+    n_bins: int = 10,
+) -> float:
+    if probs.size == 0:
+        return 0.0
+    bin_edges = np.linspace(0.0, 1.0, int(n_bins) + 1)
+    total = float(probs.size)
+    ece = 0.0
+    for idx in range(int(n_bins)):
+        left = float(bin_edges[idx])
+        right = float(bin_edges[idx + 1])
+        if idx == int(n_bins) - 1:
+            mask = (probs >= left) & (probs <= right)
+        else:
+            mask = (probs >= left) & (probs < right)
+        if not np.any(mask):
+            continue
+        bin_probs = probs[mask]
+        bin_true = y_true[mask].astype(np.float32)
+        confidence = float(np.mean(bin_probs))
+        accuracy = float(np.mean(bin_true))
+        ece += abs(confidence - accuracy) * (float(bin_probs.size) / total)
+    return float(ece)
+
+
 def choose_e2e_threshold(
     *,
     y_true: np.ndarray,
     probs: np.ndarray,
     calibration_metric: str,
-) -> float:
-    thresholds = np.round(np.arange(0.05, 0.951, 0.05), 2)
-    if not np.any(np.isclose(thresholds, 0.5)):
-        thresholds = np.sort(np.append(thresholds, 0.5))
+    threshold_min: float,
+    threshold_max: float,
+    n_thresholds: int,
+) -> tuple[float, float, dict[str, Any]]:
+    thresholds = _build_threshold_grid(
+        threshold_min=threshold_min,
+        threshold_max=threshold_max,
+        n_thresholds=n_thresholds,
+    )
+    if y_true.size == 0 or probs.size == 0:
+        empty_curve = {
+            "thresholds": [float(value) for value in thresholds.tolist()],
+            "f1": [0.0 for _ in thresholds],
+            "precision": [0.0 for _ in thresholds],
+            "recall": [0.0 for _ in thresholds],
+            "balanced_accuracy": [0.0 for _ in thresholds],
+            "youden_j": [0.0 for _ in thresholds],
+        }
+        fallback = float(np.clip(0.5, threshold_min, threshold_max))
+        return fallback, 0.0, empty_curve
 
-    best_threshold = 0.5
-    best_score = -np.inf
-    best_specificity = -np.inf
-    for threshold in thresholds:
-        preds = (probs >= threshold).astype(int)
-        tn, fp, fn, tp = _confusion_counts(y_true, preds)
-        specificity = float(tn / (tn + fp)) if (tn + fp) > 0 else 0.0
-        score = _metric_for_threshold(
-            y_true=y_true,
-            probs=probs,
-            threshold=float(threshold),
-            metric=calibration_metric,
-        )
-        if score > best_score + 1e-12 or (
-            abs(score - best_score) <= 1e-12 and specificity > best_specificity + 1e-12
-        ):
-            best_score = score
-            best_specificity = specificity
-            best_threshold = float(threshold)
-    return best_threshold
+    curve = _compute_threshold_curve(
+        y_true=y_true.astype(int),
+        probs=probs.astype(np.float32),
+        thresholds=thresholds,
+    )
+    chosen_threshold, chosen_metric_value = _choose_threshold_from_curve(
+        threshold_curve=curve,
+        calibration_metric=calibration_metric,
+    )
+    return chosen_threshold, chosen_metric_value, curve
 
 
 def _build_time_embedding(
@@ -278,6 +460,45 @@ def _predict_probs_for_month(
     if not probs_parts:
         return np.asarray([], dtype=np.float32)
     return np.concatenate(probs_parts, axis=0)
+
+
+def _collect_probs_for_indices(
+    *,
+    encoder: TemporalEncoder,
+    head,
+    device,
+    author_ids: list[str],
+    sequences_texts: list[list[str]],
+    labels: np.ndarray,
+    sequences_months: list[list[int]],
+    indices: np.ndarray,
+    train_months: int,
+    batch_size: int,
+    time_embedding,
+) -> tuple[np.ndarray, np.ndarray]:
+    if indices.size == 0:
+        return np.asarray([], dtype=np.int64), np.asarray([], dtype=np.float32)
+    y_base = labels[indices].astype(np.int64)
+    all_y: list[np.ndarray] = []
+    all_probs: list[np.ndarray] = []
+    total_months = len(sequences_texts[0])
+    for month_index in range(train_months, total_months):
+        probs = _predict_probs_for_month(
+            encoder=encoder,
+            head=head,
+            device=device,
+            author_ids=author_ids,
+            sequences_texts=sequences_texts,
+            labels=labels,
+            sequences_months=sequences_months,
+            eval_indices=indices,
+            month_index=month_index,
+            batch_size=batch_size,
+            time_embedding=time_embedding,
+        )
+        all_probs.append(probs.astype(np.float32))
+        all_y.append(y_base.copy())
+    return np.concatenate(all_y), np.concatenate(all_probs)
 
 
 def _evaluate_e2e(
@@ -399,8 +620,12 @@ def _save_eval_outputs(
             "calibration_metric",
             "fixed_threshold",
             "chosen_threshold",
+            "threshold_min",
+            "threshold_max",
+            "n_thresholds",
             "checkpoint_path",
             "latest_pointer_path",
+            "artifact_paths",
         ):
             if key in extra_metrics:
                 metadata_payload[key] = extra_metrics[key]
@@ -560,6 +785,52 @@ def run_train_e2e(config: TrainE2EConfig) -> dict[str, object]:
         threshold=0.5,
         time_embedding=time_embedding,
     )
+    calibrated_threshold: float | None = None
+    calibrated_f1: float | None = None
+    calibrated_precision: float | None = None
+    calibrated_recall: float | None = None
+    calibrated_pred_pos_rate: float | None = None
+    if config.train_eval_threshold_mode == "calibrate_on_val":
+        y_val, probs_val = _collect_probs_for_indices(
+            encoder=encoder,
+            head=head,
+            device=device,
+            author_ids=authors,
+            sequences_texts=sequences_texts,
+            labels=labels,
+            sequences_months=sequences_months,
+            indices=train_idx,
+            train_months=config.train_months,
+            batch_size=config.batch_size,
+            time_embedding=time_embedding,
+        )
+        calibrated_threshold, _metric_value, _curve = choose_e2e_threshold(
+            y_true=y_val,
+            probs=probs_val,
+            calibration_metric=config.train_eval_calibration_metric,
+            threshold_min=0.05,
+            threshold_max=0.95,
+            n_thresholds=101,
+        )
+        calibrated_per_month = _evaluate_e2e(
+            encoder=encoder,
+            head=head,
+            device=device,
+            author_ids=authors,
+            sequences_texts=sequences_texts,
+            labels=labels,
+            sequences_months=sequences_months,
+            eval_indices=eval_idx,
+            train_months=config.train_months,
+            batch_size=config.batch_size,
+            threshold=calibrated_threshold,
+            time_embedding=time_embedding,
+        )
+        calibrated_final = calibrated_per_month[-1]
+        calibrated_f1 = float(calibrated_final["f1"])
+        calibrated_precision = float(calibrated_final["precision"])
+        calibrated_recall = float(calibrated_final["recall"])
+        calibrated_pred_pos_rate = float(calibrated_final["pred_pos_rate"])
     metrics_path, metadata_path, per_month_csv_path, plot_paths = _save_eval_outputs(
         output_dir=output_dir,
         config_obj=config,
@@ -597,6 +868,13 @@ def run_train_e2e(config: TrainE2EConfig) -> dict[str, object]:
         "final_accuracy": float(final_month["accuracy"]),
         "final_f1": float(final_month["f1"]),
         "latest_pointer_path": str(latest_pointer_path),
+        "train_eval_threshold_mode": config.train_eval_threshold_mode,
+        "train_eval_calibration_metric": config.train_eval_calibration_metric,
+        "calibrated_threshold": calibrated_threshold,
+        "calibrated_f1": calibrated_f1,
+        "calibrated_precision": calibrated_precision,
+        "calibrated_recall": calibrated_recall,
+        "calibrated_pred_pos_rate": calibrated_pred_pos_rate,
     }
 
 
@@ -677,34 +955,43 @@ def run_eval_e2e(config: EvalE2EConfig) -> dict[str, object]:
         and config.threshold != 0.5
     ):
         threshold_used = float(config.threshold)
+    chosen_metric_value = 0.0
+    val_threshold_curve: dict[str, Any] | None = None
+    y_val_all, probs_val_all = _collect_probs_for_indices(
+        encoder=encoder,
+        head=head,
+        device=device,
+        author_ids=authors,
+        sequences_texts=sequences_texts,
+        labels=labels,
+        sequences_months=sequences_months,
+        indices=train_idx,
+        train_months=config.train_months,
+        batch_size=config.batch_size,
+        time_embedding=time_embedding,
+    )
+    y_test_all, probs_test_all = _collect_probs_for_indices(
+        encoder=encoder,
+        head=head,
+        device=device,
+        author_ids=authors,
+        sequences_texts=sequences_texts,
+        labels=labels,
+        sequences_months=sequences_months,
+        indices=eval_idx,
+        train_months=config.train_months,
+        batch_size=config.batch_size,
+        time_embedding=time_embedding,
+    )
     if config.threshold_mode == "calibrate_on_val":
-        calibration_indices = train_idx
-        if int(calibration_indices.shape[0]) > 0:
-            val_labels = labels[calibration_indices].astype(int)
-            val_probs_by_month: list[np.ndarray] = []
-            val_labels_by_month: list[np.ndarray] = []
-            for month_index in range(config.train_months, total_months):
-                probs = _predict_probs_for_month(
-                    encoder=encoder,
-                    head=head,
-                    device=device,
-                    author_ids=authors,
-                    sequences_texts=sequences_texts,
-                    labels=labels,
-                    sequences_months=sequences_months,
-                    eval_indices=calibration_indices,
-                    month_index=month_index,
-                    batch_size=config.batch_size,
-                    time_embedding=time_embedding,
-                )
-                val_probs_by_month.append(probs)
-                val_labels_by_month.append(val_labels)
-            y_calibration = np.concatenate(val_labels_by_month).astype(int)
-            probs_calibration = np.concatenate(val_probs_by_month).astype(np.float32)
-            threshold_used = choose_e2e_threshold(
-                y_true=y_calibration,
-                probs=probs_calibration,
+        if int(train_idx.shape[0]) > 0:
+            threshold_used, chosen_metric_value, val_threshold_curve = choose_e2e_threshold(
+                y_true=y_val_all,
+                probs=probs_val_all,
                 calibration_metric=config.calibration_metric,
+                threshold_min=config.threshold_min,
+                threshold_max=config.threshold_max,
+                n_thresholds=config.n_thresholds,
             )
             print(
                 "[eval-e2e] calibrated threshold "
@@ -732,6 +1019,70 @@ def run_eval_e2e(config: EvalE2EConfig) -> dict[str, object]:
         time_embedding=time_embedding,
     )
 
+    y_eval_base = labels[eval_idx].astype(int)
+    final_month_probs = _predict_probs_for_month(
+        encoder=encoder,
+        head=head,
+        device=device,
+        author_ids=authors,
+        sequences_texts=sequences_texts,
+        labels=labels,
+        sequences_months=sequences_months,
+        eval_indices=eval_idx,
+        month_index=total_months - 1,
+        batch_size=config.batch_size,
+        time_embedding=time_embedding,
+    )
+    per_month[-1]["brier_score"] = _brier_score(y_eval_base, final_month_probs)
+    per_month[-1]["ece"] = _expected_calibration_error(
+        y_true=y_eval_base,
+        probs=final_month_probs,
+        n_bins=10,
+    )
+
+    artifact_paths: dict[str, str] = {}
+    val_prob_summary = _probability_summary(probs_val_all)
+    test_prob_summary = _probability_summary(probs_test_all)
+    val_prob_summary_path = output_dir / "val_prob_summary.json"
+    test_prob_summary_path = output_dir / "test_prob_summary.json"
+    val_prob_summary_path.write_text(json.dumps(val_prob_summary, indent=2), encoding="utf-8")
+    test_prob_summary_path.write_text(json.dumps(test_prob_summary, indent=2), encoding="utf-8")
+    artifact_paths["val_prob_summary_path"] = str(val_prob_summary_path)
+    artifact_paths["test_prob_summary_path"] = str(test_prob_summary_path)
+
+    val_prob_hist_path = output_dir / "val_prob_hist.png"
+    test_prob_hist_path = output_dir / "test_prob_hist.png"
+    _plot_probability_histogram(
+        probs=probs_val_all,
+        title="Validation probability histogram",
+        output_path=val_prob_hist_path,
+    )
+    _plot_probability_histogram(
+        probs=probs_test_all,
+        title="Test probability histogram",
+        output_path=test_prob_hist_path,
+    )
+    artifact_paths["val_prob_hist_path"] = str(val_prob_hist_path)
+    artifact_paths["test_prob_hist_path"] = str(test_prob_hist_path)
+
+    if val_threshold_curve is not None:
+        val_threshold_curve_payload = dict(val_threshold_curve)
+        val_threshold_curve_payload["chosen_threshold"] = float(threshold_used)
+        val_threshold_curve_payload["chosen_metric"] = config.calibration_metric
+        val_threshold_curve_payload["chosen_metric_value"] = float(chosen_metric_value)
+        val_threshold_curve_json_path = output_dir / "val_threshold_curve.json"
+        val_threshold_curve_png_path = output_dir / "val_threshold_curve.png"
+        val_threshold_curve_json_path.write_text(
+            json.dumps(val_threshold_curve_payload, indent=2),
+            encoding="utf-8",
+        )
+        _plot_threshold_curve(
+            threshold_curve=val_threshold_curve_payload,
+            output_path=val_threshold_curve_png_path,
+        )
+        artifact_paths["val_threshold_curve_json_path"] = str(val_threshold_curve_json_path)
+        artifact_paths["val_threshold_curve_plot_path"] = str(val_threshold_curve_png_path)
+
     model_copy_path = output_dir / "e2e_model.pt"
     torch.save(checkpoint, model_copy_path)
     metrics_path, metadata_path, per_month_csv_path, plot_paths = _save_eval_outputs(
@@ -751,8 +1102,12 @@ def run_eval_e2e(config: EvalE2EConfig) -> dict[str, object]:
             "calibration_metric": config.calibration_metric,
             "fixed_threshold": float(config.fixed_threshold),
             "chosen_threshold": float(threshold_used),
+            "threshold_min": float(config.threshold_min),
+            "threshold_max": float(config.threshold_max),
+            "n_thresholds": int(config.n_thresholds),
             "checkpoint_path": str(checkpoint_path),
             "latest_pointer_path": str(pointer_path) if pointer_path is not None else None,
+            "artifact_paths": artifact_paths,
         },
     )
     final_month = per_month[-1]
@@ -766,6 +1121,9 @@ def run_eval_e2e(config: EvalE2EConfig) -> dict[str, object]:
         "calibration_metric": config.calibration_metric,
         "fixed_threshold": float(config.fixed_threshold),
         "chosen_threshold": float(threshold_used),
+        "threshold_min": float(config.threshold_min),
+        "threshold_max": float(config.threshold_max),
+        "n_thresholds": int(config.n_thresholds),
         "checkpoint_path": str(checkpoint_path),
         "latest_pointer_path": str(pointer_path) if pointer_path is not None else None,
         "output_dir": str(output_dir),
@@ -774,8 +1132,11 @@ def run_eval_e2e(config: EvalE2EConfig) -> dict[str, object]:
         "run_metadata_path": str(metadata_path),
         "per_month_csv_path": str(per_month_csv_path),
         "plot_paths": plot_paths,
+        "artifact_paths": artifact_paths,
         "per_month": per_month,
         "final_month_index": int(final_month["month_index"]),
         "final_accuracy": float(final_month["accuracy"]),
         "final_f1": float(final_month["f1"]),
+        "final_brier_score": float(final_month["brier_score"]),
+        "final_ece": float(final_month["ece"]),
     }

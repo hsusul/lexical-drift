@@ -9,6 +9,9 @@ checkpoint_path: ""
 test_size: 0.2
 pooling: cls
 threshold_mode: calibrate_on_val
-calibration_metric: balanced_accuracy
+calibration_metric: f1
 fixed_threshold: 0.5
+threshold_min: 0.05
+threshold_max: 0.95
+n_thresholds: 101
 pretrained_encoder_path: ""

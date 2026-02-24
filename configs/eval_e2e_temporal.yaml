@@ -12,4 +12,7 @@ threshold: 0.5
 threshold_mode: fixed
 calibration_metric: balanced_accuracy
 fixed_threshold: 0.5
+threshold_min: 0.05
+threshold_max: 0.95
+n_thresholds: 101
 pretrained_encoder_path: ""
