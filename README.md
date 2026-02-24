@@ -87,7 +87,30 @@ training loop (no embedding cache):
 ```bash
 lexdrift train-e2e --config configs/train_e2e_temporal.yaml
 lexdrift train-e2e --config configs/train_e2e_temporal_focal.yaml
-lexdrift eval-e2e --config configs/eval_e2e_temporal.yaml
+lexdrift eval-e2e --config configs/eval_e2e_temporal.yaml --use-latest
+```
+
+`train-e2e` writes a latest-checkpoint pointer at
+`artifacts/e2e/latest/latest_checkpoint.json` (or `<output_dir>/latest/latest_checkpoint.json`).
+Use `--use-latest` to resolve checkpoint_path from that pointer.
+
+Threshold calibration for e2e evaluation:
+
+```bash
+# fixed threshold
+lexdrift eval-e2e --config configs/eval_e2e_temporal.yaml --use-latest
+
+# calibrate threshold on validation split
+lexdrift eval-e2e --config configs/eval_e2e_temporal_calib.yaml --use-latest
+```
+
+Repeated-seed e2e evaluation summary:
+
+```bash
+lexdrift eval-e2e-sweep \
+  --train-config configs/train_e2e_temporal.yaml \
+  --eval-config configs/eval_e2e_temporal_calib.yaml \
+  --seeds 1,2,3 --n-authors 50 --months 12 --difficulty hard
 ```
 
 ## Contrastive Pretraining
@@ -224,7 +247,8 @@ lexdrift eval-temporal --config configs/eval_temporal.yaml
 lexdrift eval-temporal-sweep --seeds 1,2,3 --n-authors 80 --months 12
 lexdrift eval-temporal-compare --config-a configs/eval_temporal_fixed.yaml --config-b configs/eval_temporal_calib.yaml --seeds 1,2,3 --n-authors 50 --months 12 --difficulty hard
 lexdrift train-e2e --config configs/train_e2e_temporal.yaml
-lexdrift eval-e2e --config configs/eval_e2e_temporal.yaml
+lexdrift eval-e2e --config configs/eval_e2e_temporal.yaml --use-latest
+lexdrift eval-e2e-sweep --train-config configs/train_e2e_temporal.yaml --eval-config configs/eval_e2e_temporal_calib.yaml --seeds 1,2,3
 lexdrift pretrain-contrastive --config configs/pretrain_contrastive.yaml
 lexdrift pretrain-temporal-order --config configs/pretrain_temporal_order.yaml
 lexdrift train-multitask --config configs/train_multitask.yaml

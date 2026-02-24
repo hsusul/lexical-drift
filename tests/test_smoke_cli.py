@@ -17,6 +17,7 @@ def test_cli_help() -> None:
     assert "train-temporal" in result.output
     assert "train-e2e" in result.output
     assert "eval-e2e" in result.output
+    assert "eval-e2e-sweep" in result.output
     assert "pretrain-contrastive" in result.output
     assert "pretrain-temporal-order" in result.output
     assert "train-multitask" in result.output

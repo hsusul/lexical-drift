@@ -952,6 +952,7 @@ def train_e2e(
     typer.echo(f"[train-e2e] metrics={result['metrics_path']}")
     typer.echo(f"[train-e2e] per-month-csv={result['per_month_csv_path']}")
     typer.echo(f"[train-e2e] metadata={result['run_metadata_path']}")
+    typer.echo(f"[train-e2e] latest-pointer={result['latest_pointer_path']}")
 
 
 @app.command("eval-e2e")
@@ -960,6 +961,10 @@ def eval_e2e(
         Path("configs/eval_e2e_temporal.yaml"),
         help="Path to end-to-end temporal evaluation config.",
     ),
+    use_latest: bool = typer.Option(
+        False,
+        help="Use checkpoint from <output_dir>/latest/latest_checkpoint.json.",
+    ),
 ) -> None:
     has_torch = _dependency_available("torch")
     has_transformers = _dependency_available("transformers")
@@ -967,9 +972,13 @@ def eval_e2e(
         typer.echo("[eval-e2e] skipping (torch and/or transformers not installed)")
         return
 
-    from lexical_drift.train.e2e_temporal import run_eval_e2e
+    from lexical_drift.train.e2e_temporal import resolve_latest_e2e_checkpoint, run_eval_e2e
 
     eval_config = load_eval_e2e_config(config)
+    if use_latest:
+        latest_checkpoint_path, pointer_path = resolve_latest_e2e_checkpoint(eval_config.output_dir)
+        eval_config = replace(eval_config, checkpoint_path=str(latest_checkpoint_path))
+        typer.echo(f"[eval-e2e] using latest checkpoint from {pointer_path}")
     result = run_eval_e2e(eval_config)
     typer.echo(
         "[eval-e2e] "
@@ -984,11 +993,95 @@ def eval_e2e(
         f"pos_weight={result['pos_weight']} "
         f"focal_gamma={float(result['focal_gamma']):.2f}"
     )
+    typer.echo(
+        "[eval-e2e] threshold "
+        f"mode={result['threshold_mode']} "
+        f"metric={result['calibration_metric']} "
+        f"fixed={float(result['fixed_threshold']):.4f} "
+        f"chosen={float(result['chosen_threshold']):.4f}"
+    )
     typer.echo(f"[eval-e2e] output_dir={result['output_dir']}")
+    typer.echo(f"[eval-e2e] checkpoint={result['checkpoint_path']}")
     typer.echo(f"[eval-e2e] model={result['model_path']}")
     typer.echo(f"[eval-e2e] metrics={result['metrics_path']}")
     typer.echo(f"[eval-e2e] per-month-csv={result['per_month_csv_path']}")
     typer.echo(f"[eval-e2e] metadata={result['run_metadata_path']}")
+
+
+@app.command("eval-e2e-sweep")
+def eval_e2e_sweep(
+    train_config: Path = typer.Option(
+        Path("configs/train_e2e_temporal.yaml"),
+        help="Path to end-to-end temporal training config template.",
+    ),
+    eval_config: Path = typer.Option(
+        Path("configs/eval_e2e_temporal.yaml"),
+        help="Path to end-to-end temporal evaluation config template.",
+    ),
+    seeds: str = typer.Option(
+        "",
+        help="Comma-separated seeds (e.g. 1,2,3). Overrides --n-seeds/--start-seed.",
+    ),
+    n_seeds: int = typer.Option(5, min=1, help="Number of sequential seeds to run."),
+    start_seed: int = typer.Option(1, help="Starting seed when --seeds is not provided."),
+    n_authors: int = typer.Option(50, min=1, help="Synthetic authors per seed."),
+    months: int = typer.Option(12, min=2, help="Synthetic months per author."),
+    difficulty: Difficulty = typer.Option(
+        Difficulty.hard,
+        help="Synthetic generation preset difficulty.",
+    ),
+    artifact_root: Path = typer.Option(
+        Path("artifacts"),
+        help="Root directory for e2e sweep outputs.",
+    ),
+    results_path: str = typer.Option(
+        "",
+        help="JSONL output path (default: <artifact_root>/eval_e2e_sweep.jsonl).",
+    ),
+) -> None:
+    has_torch = _dependency_available("torch")
+    has_transformers = _dependency_available("transformers")
+    if not has_torch or not has_transformers:
+        typer.echo("[eval-e2e-sweep] skipping (torch and/or transformers not installed)")
+        return
+
+    from lexical_drift.eval.eval_e2e_sweep import run_eval_e2e_sweep
+
+    train_template = load_train_e2e_config(train_config)
+    eval_template = load_eval_e2e_config(eval_config)
+    seed_list = _resolve_seed_list(seeds, n_seeds, start_seed)
+    output_results = Path(results_path) if results_path else artifact_root / "eval_e2e_sweep.jsonl"
+    result = run_eval_e2e_sweep(
+        train_config_template=train_template,
+        eval_config_template=eval_template,
+        seeds=seed_list,
+        n_authors=n_authors,
+        months=months,
+        difficulty=difficulty.value,
+        artifact_root=artifact_root,
+        results_path=output_results,
+    )
+
+    typer.echo(f"[eval-e2e-sweep] results={result['results_path']}")
+    typer.echo(f"[eval-e2e-sweep] records-csv={result['records_csv_path']}")
+    typer.echo(f"[eval-e2e-sweep] metadata={result['run_metadata_path']}")
+    typer.echo(
+        "[eval-e2e-sweep] "
+        f"runs={result['total_runs']} "
+        f"success={result['success_count']} "
+        f"failed={result['failure_count']}"
+    )
+    summary = result["summary"] if isinstance(result["summary"], dict) else {}
+    for metric in (
+        "accuracy",
+        "f1",
+        "roc_auc",
+        "pr_auc",
+        "balanced_accuracy",
+        "threshold_used",
+    ):
+        text = _format_summary_stats(summary.get(metric))
+        typer.echo(f"[eval-e2e-sweep]   {metric:>16} {text}")
 
 
 @app.command("pretrain-contrastive")

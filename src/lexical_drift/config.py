@@ -109,10 +109,13 @@ class EvalE2EConfig:
     max_length: int
     batch_size: int
     train_months: int
-    checkpoint_path: str
     test_size: float
+    checkpoint_path: str
     pooling: str = "cls"
     threshold: float = 0.5
+    threshold_mode: str = "fixed"
+    calibration_metric: str = "balanced_accuracy"
+    fixed_threshold: float = 0.5
     pretrained_encoder_path: str = ""
 
 
@@ -513,7 +516,6 @@ def load_eval_e2e_config(path: str | Path) -> EvalE2EConfig:
         "max_length",
         "batch_size",
         "train_months",
-        "checkpoint_path",
         "test_size",
     }
     missing = sorted(required - set(raw.keys()))
@@ -529,10 +531,13 @@ def load_eval_e2e_config(path: str | Path) -> EvalE2EConfig:
         max_length=int(raw["max_length"]),
         batch_size=int(raw["batch_size"]),
         train_months=int(raw["train_months"]),
-        checkpoint_path=str(raw["checkpoint_path"]),
         test_size=float(raw["test_size"]),
+        checkpoint_path=str(raw.get("checkpoint_path", "")),
         pooling=str(raw.get("pooling", "cls")),
-        threshold=float(raw.get("threshold", 0.5)),
+        threshold=float(raw.get("threshold", raw.get("fixed_threshold", 0.5))),
+        threshold_mode=str(raw.get("threshold_mode", "fixed")),
+        calibration_metric=str(raw.get("calibration_metric", "balanced_accuracy")),
+        fixed_threshold=float(raw.get("fixed_threshold", raw.get("threshold", 0.5))),
         pretrained_encoder_path=str(raw.get("pretrained_encoder_path", "")),
     )
 
@@ -544,14 +549,18 @@ def load_eval_e2e_config(path: str | Path) -> EvalE2EConfig:
         raise ValueError("batch_size must be > 0")
     if config.train_months < 1:
         raise ValueError("train_months must be >= 1")
-    if not config.checkpoint_path.strip():
-        raise ValueError("checkpoint_path must be non-empty")
     if not 0.0 < config.test_size < 1.0:
         raise ValueError("test_size must be between 0 and 1")
     if config.pooling not in {"cls", "mean"}:
         raise ValueError("pooling must be one of: cls, mean")
     if not 0.0 < config.threshold < 1.0:
         raise ValueError("threshold must be between 0 and 1")
+    if config.threshold_mode not in {"fixed", "calibrate_on_val"}:
+        raise ValueError("threshold_mode must be one of: fixed, calibrate_on_val")
+    if config.calibration_metric not in {"youden_j", "f1", "balanced_accuracy"}:
+        raise ValueError("calibration_metric must be one of: youden_j, f1, balanced_accuracy")
+    if not 0.0 < config.fixed_threshold < 1.0:
+        raise ValueError("fixed_threshold must be between 0 and 1")
 
     return config
 

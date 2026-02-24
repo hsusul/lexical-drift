@@ -20,6 +20,7 @@ from lexical_drift.utils import ensure_dir
 from lexical_drift.utils.metadata import config_sha256, file_sha256, git_commit_hash
 
 REQUIRED_COLUMNS = {"author_id", "month_index", "text", "drift_label"}
+LATEST_POINTER_FILENAME = "latest_checkpoint.json"
 
 
 def _require_torch():
@@ -36,6 +37,52 @@ def _set_seed(seed: int) -> None:
     np.random.seed(seed)
     torch = _require_torch()
     torch.manual_seed(seed)
+
+
+def _to_repo_relative(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(Path.cwd().resolve()))
+    except ValueError:
+        return str(path.resolve())
+
+
+def _latest_pointer_path(output_root: str | Path) -> Path:
+    return Path(output_root) / "latest" / LATEST_POINTER_FILENAME
+
+
+def write_latest_e2e_pointer(
+    *,
+    output_root: str | Path,
+    model_path: Path,
+    run_dir: Path,
+    config_hash: str,
+) -> Path:
+    pointer_path = _latest_pointer_path(output_root)
+    pointer_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "model_path": _to_repo_relative(model_path),
+        "run_dir": _to_repo_relative(run_dir),
+        "config_hash": config_hash,
+        "timestamp_iso": datetime.now(UTC).isoformat(),
+    }
+    pointer_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return pointer_path
+
+
+def resolve_latest_e2e_checkpoint(output_root: str | Path = "artifacts/e2e") -> tuple[Path, Path]:
+    pointer_path = _latest_pointer_path(output_root)
+    if not pointer_path.exists():
+        raise FileNotFoundError(f"Latest checkpoint pointer not found: {pointer_path}")
+    payload = json.loads(pointer_path.read_text(encoding="utf-8"))
+    model_value = str(payload.get("model_path", "")).strip()
+    if not model_value:
+        raise ValueError(f"Latest checkpoint pointer is missing model_path: {pointer_path}")
+    model_path = Path(model_value)
+    if not model_path.is_absolute():
+        model_path = (Path.cwd() / model_path).resolve()
+    if not model_path.exists():
+        raise FileNotFoundError(f"Latest checkpoint file from pointer does not exist: {model_path}")
+    return model_path, pointer_path
 
 
 def _validate_equal_sequence_lengths(sequences_texts: list[list[str]]) -> int:
@@ -100,6 +147,59 @@ def _compute_confusion_metrics(tn: int, fp: int, fn: int, tp: int) -> dict[str, 
         "specificity": specificity,
         "balanced_accuracy": float(balanced_accuracy),
     }
+
+
+def _metric_for_threshold(
+    *,
+    y_true: np.ndarray,
+    probs: np.ndarray,
+    threshold: float,
+    metric: str,
+) -> float:
+    preds = (probs >= threshold).astype(int)
+    tn, fp, fn, tp = _confusion_counts(y_true, preds)
+    recall = float(tp / (tp + fn)) if (tp + fn) > 0 else 0.0
+    specificity = float(tn / (tn + fp)) if (tn + fp) > 0 else 0.0
+    if metric == "f1":
+        return float(f1_score(y_true, preds, zero_division=0))
+    if metric == "balanced_accuracy":
+        return float(0.5 * (recall + specificity))
+    if metric == "youden_j":
+        fpr = float(fp / (fp + tn)) if (fp + tn) > 0 else 0.0
+        return float(recall - fpr)
+    raise ValueError(f"Unsupported calibration_metric: {metric}")
+
+
+def choose_e2e_threshold(
+    *,
+    y_true: np.ndarray,
+    probs: np.ndarray,
+    calibration_metric: str,
+) -> float:
+    thresholds = np.round(np.arange(0.05, 0.951, 0.05), 2)
+    if not np.any(np.isclose(thresholds, 0.5)):
+        thresholds = np.sort(np.append(thresholds, 0.5))
+
+    best_threshold = 0.5
+    best_score = -np.inf
+    best_specificity = -np.inf
+    for threshold in thresholds:
+        preds = (probs >= threshold).astype(int)
+        tn, fp, fn, tp = _confusion_counts(y_true, preds)
+        specificity = float(tn / (tn + fp)) if (tn + fp) > 0 else 0.0
+        score = _metric_for_threshold(
+            y_true=y_true,
+            probs=probs,
+            threshold=float(threshold),
+            metric=calibration_metric,
+        )
+        if score > best_score + 1e-12 or (
+            abs(score - best_score) <= 1e-12 and specificity > best_specificity + 1e-12
+        ):
+            best_score = score
+            best_specificity = specificity
+            best_threshold = float(threshold)
+    return best_threshold
 
 
 def _build_time_embedding(
@@ -256,6 +356,7 @@ def _save_eval_outputs(
     per_month: list[dict[str, float | int | None]],
     seed: int,
     model_type: str,
+    extra_metrics: dict[str, object] | None = None,
 ) -> tuple[Path, Path, Path, dict[str, str]]:
     per_month_csv_path = output_dir / "per_month_metrics.csv"
     pd.DataFrame(per_month).to_csv(per_month_csv_path, index=False)
@@ -271,6 +372,8 @@ def _save_eval_outputs(
         "per_month_csv_path": str(per_month_csv_path),
         "config": asdict(config_obj),
     }
+    if extra_metrics:
+        metrics_payload.update(extra_metrics)
     metrics_path = output_dir / "metrics.json"
     metrics_path.write_text(json.dumps(metrics_payload, indent=2), encoding="utf-8")
 
@@ -286,6 +389,21 @@ def _save_eval_outputs(
         "metrics_path": str(metrics_path),
         "per_month_csv_path": str(per_month_csv_path),
     }
+    if extra_metrics:
+        for key in (
+            "use_time_embeddings",
+            "loss_type",
+            "pos_weight",
+            "focal_gamma",
+            "threshold_mode",
+            "calibration_metric",
+            "fixed_threshold",
+            "chosen_threshold",
+            "checkpoint_path",
+            "latest_pointer_path",
+        ):
+            if key in extra_metrics:
+                metadata_payload[key] = extra_metrics[key]
     metadata_path = output_dir / "run_metadata.json"
     metadata_path.write_text(json.dumps(metadata_payload, indent=2), encoding="utf-8")
     return metrics_path, metadata_path, per_month_csv_path, plot_paths
@@ -421,6 +539,12 @@ def run_train_e2e(config: TrainE2EConfig) -> dict[str, object]:
         },
         model_path,
     )
+    latest_pointer_path = write_latest_e2e_pointer(
+        output_root=config.output_dir,
+        model_path=model_path,
+        run_dir=output_dir,
+        config_hash=config_sha256(config),
+    )
 
     per_month = _evaluate_e2e(
         encoder=encoder,
@@ -444,6 +568,17 @@ def run_train_e2e(config: TrainE2EConfig) -> dict[str, object]:
         per_month=per_month,
         seed=config.random_seed,
         model_type="e2e_gru",
+        extra_metrics={
+            "use_time_embeddings": bool(config.use_time_embeddings),
+            "loss_type": config.loss_type,
+            "pos_weight": config.pos_weight,
+            "focal_gamma": float(config.focal_gamma),
+            "threshold_mode": "fixed",
+            "calibration_metric": "balanced_accuracy",
+            "fixed_threshold": 0.5,
+            "chosen_threshold": 0.5,
+            "latest_pointer_path": str(latest_pointer_path),
+        },
     )
     final_month = per_month[-1]
     return {
@@ -461,6 +596,7 @@ def run_train_e2e(config: TrainE2EConfig) -> dict[str, object]:
         "final_month_index": int(final_month["month_index"]),
         "final_accuracy": float(final_month["accuracy"]),
         "final_f1": float(final_month["f1"]),
+        "latest_pointer_path": str(latest_pointer_path),
     }
 
 
@@ -478,14 +614,20 @@ def run_eval_e2e(config: EvalE2EConfig) -> dict[str, object]:
 
     indices = np.arange(len(authors), dtype=np.int64)
     stratify = labels if len(np.unique(labels)) > 1 else None
-    _train_idx, eval_idx = train_test_split(
+    train_idx, eval_idx = train_test_split(
         indices,
         test_size=config.test_size,
         random_state=config.random_seed,
         stratify=stratify,
     )
-
-    checkpoint = torch.load(config.checkpoint_path, map_location=device)
+    checkpoint_path = (
+        Path(config.checkpoint_path.strip()) if config.checkpoint_path.strip() else None
+    )
+    pointer_path: Path | None = None
+    if checkpoint_path is None:
+        checkpoint_path, pointer_path = resolve_latest_e2e_checkpoint(config.output_dir)
+        print(f"[eval-e2e] resolved latest checkpoint from {pointer_path}")
+    checkpoint = torch.load(checkpoint_path, map_location=device)
     encoder = TemporalEncoder(
         model_name=config.encoder_model,
         max_length=config.max_length,
@@ -528,6 +670,50 @@ def run_eval_e2e(config: EvalE2EConfig) -> dict[str, object]:
             if time_embedding is not None:
                 time_embedding.load_state_dict(time_state)
 
+    threshold_used = float(config.fixed_threshold)
+    if (
+        config.threshold_mode == "fixed"
+        and config.fixed_threshold == 0.5
+        and config.threshold != 0.5
+    ):
+        threshold_used = float(config.threshold)
+    if config.threshold_mode == "calibrate_on_val":
+        calibration_indices = train_idx
+        if int(calibration_indices.shape[0]) > 0:
+            val_labels = labels[calibration_indices].astype(int)
+            val_probs_by_month: list[np.ndarray] = []
+            val_labels_by_month: list[np.ndarray] = []
+            for month_index in range(config.train_months, total_months):
+                probs = _predict_probs_for_month(
+                    encoder=encoder,
+                    head=head,
+                    device=device,
+                    author_ids=authors,
+                    sequences_texts=sequences_texts,
+                    labels=labels,
+                    sequences_months=sequences_months,
+                    eval_indices=calibration_indices,
+                    month_index=month_index,
+                    batch_size=config.batch_size,
+                    time_embedding=time_embedding,
+                )
+                val_probs_by_month.append(probs)
+                val_labels_by_month.append(val_labels)
+            y_calibration = np.concatenate(val_labels_by_month).astype(int)
+            probs_calibration = np.concatenate(val_probs_by_month).astype(np.float32)
+            threshold_used = choose_e2e_threshold(
+                y_true=y_calibration,
+                probs=probs_calibration,
+                calibration_metric=config.calibration_metric,
+            )
+            print(
+                "[eval-e2e] calibrated threshold "
+                f"metric={config.calibration_metric} "
+                f"value={threshold_used:.4f}"
+            )
+        else:
+            print("[eval-e2e] calibration skipped: empty calibration split")
+
     config_hash = config_sha256(config)[:8]
     run_stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     output_dir = ensure_dir(Path(config.output_dir) / f"eval_e2e_{run_stamp}_{config_hash}")
@@ -542,7 +728,7 @@ def run_eval_e2e(config: EvalE2EConfig) -> dict[str, object]:
         eval_indices=eval_idx,
         train_months=config.train_months,
         batch_size=config.batch_size,
-        threshold=config.threshold,
+        threshold=threshold_used,
         time_embedding=time_embedding,
     )
 
@@ -556,6 +742,18 @@ def run_eval_e2e(config: EvalE2EConfig) -> dict[str, object]:
         per_month=per_month,
         seed=config.random_seed,
         model_type="e2e_gru",
+        extra_metrics={
+            "use_time_embeddings": bool(time_embedding is not None),
+            "loss_type": checkpoint_loss_type,
+            "pos_weight": checkpoint_pos_weight,
+            "focal_gamma": float(checkpoint_focal_gamma),
+            "threshold_mode": config.threshold_mode,
+            "calibration_metric": config.calibration_metric,
+            "fixed_threshold": float(config.fixed_threshold),
+            "chosen_threshold": float(threshold_used),
+            "checkpoint_path": str(checkpoint_path),
+            "latest_pointer_path": str(pointer_path) if pointer_path is not None else None,
+        },
     )
     final_month = per_month[-1]
     return {
@@ -564,12 +762,19 @@ def run_eval_e2e(config: EvalE2EConfig) -> dict[str, object]:
         "loss_type": checkpoint_loss_type,
         "pos_weight": checkpoint_pos_weight,
         "focal_gamma": float(checkpoint_focal_gamma),
+        "threshold_mode": config.threshold_mode,
+        "calibration_metric": config.calibration_metric,
+        "fixed_threshold": float(config.fixed_threshold),
+        "chosen_threshold": float(threshold_used),
+        "checkpoint_path": str(checkpoint_path),
+        "latest_pointer_path": str(pointer_path) if pointer_path is not None else None,
         "output_dir": str(output_dir),
         "model_path": str(model_copy_path),
         "metrics_path": str(metrics_path),
         "run_metadata_path": str(metadata_path),
         "per_month_csv_path": str(per_month_csv_path),
         "plot_paths": plot_paths,
+        "per_month": per_month,
         "final_month_index": int(final_month["month_index"]),
         "final_accuracy": float(final_month["accuracy"]),
         "final_f1": float(final_month["f1"]),
