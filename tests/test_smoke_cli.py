@@ -20,6 +20,7 @@ def test_cli_help() -> None:
     assert "eval-e2e-sweep" in result.output
     assert "ablate-time-embeddings" in result.output
     assert "ablate-loss" in result.output
+    assert "summarize-experiments" in result.output
     assert "pretrain-contrastive" in result.output
     assert "pretrain-temporal-order" in result.output
     assert "train-multitask" in result.output

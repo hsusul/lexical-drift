@@ -149,6 +149,51 @@ lexdrift ablate-loss \
   --seeds 1,2,3 --n-authors 50 --months 12 --difficulty hard
 ```
 
+Generate a consolidated markdown summary and best-config YAMLs:
+
+```bash
+lexdrift summarize-experiments --artifact-root artifacts/experiment_runs
+```
+
+## Results
+
+Run the full reproducible reporting chain:
+
+```bash
+# 1) baseline sweep
+lexdrift eval-e2e-sweep \
+  --train-config configs/train_e2e_temporal.yaml \
+  --eval-config configs/eval_e2e_temporal_calib.yaml \
+  --seeds 1,2,3 --n-authors 50 --months 12 --difficulty hard
+
+# 2) time-embedding ablation
+lexdrift ablate-time-embeddings \
+  --train-config configs/train_e2e_temporal.yaml \
+  --eval-config configs/eval_e2e_temporal_calib.yaml \
+  --seeds 1,2,3 --n-authors 50 --months 12 --difficulty hard
+
+# 3) loss ablation
+lexdrift ablate-loss \
+  --train-config configs/train_e2e_temporal.yaml \
+  --eval-config configs/eval_e2e_temporal_calib.yaml \
+  --seeds 1,2,3 --n-authors 50 --months 12 --difficulty hard
+
+# 4) summary report + best configs
+lexdrift summarize-experiments --artifact-root artifacts/experiment_runs
+```
+
+Example summary output (short):
+
+```text
+# lexical-drift Experiment Summary
+## Baseline Sweep (E2E)
+| f1 | 0.71±0.03 |
+## Time-Embedding Ablation
+| delta_f1 mean±std | 0.0230±0.0100 |
+## Loss Ablation Top Configurations
+| 1 | focal | 2.0 | 4.0 | 0.7200 | 0.8200 |
+```
+
 ## Contrastive Pretraining
 
 Pretrain the encoder with adjacent-month positives (InfoNCE), then use the checkpoint in
@@ -287,6 +332,7 @@ lexdrift eval-e2e --config configs/eval_e2e_temporal.yaml --use-latest
 lexdrift eval-e2e-sweep --train-config configs/train_e2e_temporal.yaml --eval-config configs/eval_e2e_temporal_calib.yaml --seeds 1,2,3
 lexdrift ablate-time-embeddings --train-config configs/train_e2e_temporal.yaml --eval-config configs/eval_e2e_temporal_calib.yaml --seeds 1,2,3
 lexdrift ablate-loss --train-config configs/train_e2e_temporal.yaml --eval-config configs/eval_e2e_temporal_calib.yaml --seeds 1,2,3
+lexdrift summarize-experiments --artifact-root artifacts/experiment_runs
 lexdrift pretrain-contrastive --config configs/pretrain_contrastive.yaml
 lexdrift pretrain-temporal-order --config configs/pretrain_temporal_order.yaml
 lexdrift train-multitask --config configs/train_multitask.yaml

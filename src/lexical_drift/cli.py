@@ -1236,6 +1236,32 @@ def ablate_loss(
         )
 
 
+@app.command("summarize-experiments")
+def summarize_experiments(
+    artifact_root: Path = typer.Option(
+        Path("artifacts/experiment_runs"),
+        help="Root directory containing sweep/ablation artifacts.",
+    ),
+) -> None:
+    from lexical_drift.eval.experiment_summary import run_summarize_experiments
+
+    result = run_summarize_experiments(
+        artifact_root=artifact_root,
+        config_dir=Path("configs"),
+    )
+    typer.echo(f"[summarize-experiments] summary={result['summary_markdown_path']}")
+    if result.get("sweep_summary_path"):
+        typer.echo(f"[summarize-experiments] sweep={result['sweep_summary_path']}")
+    if result.get("time_ablation_summary_path"):
+        typer.echo(f"[summarize-experiments] time-ablation={result['time_ablation_summary_path']}")
+    if result.get("loss_ablation_summary_path"):
+        typer.echo(f"[summarize-experiments] loss-ablation={result['loss_ablation_summary_path']}")
+    if result.get("train_best_config_path"):
+        typer.echo(f"[summarize-experiments] train-best={result['train_best_config_path']}")
+    if result.get("eval_best_config_path"):
+        typer.echo(f"[summarize-experiments] eval-best={result['eval_best_config_path']}")
+
+
 @app.command("pretrain-contrastive")
 def pretrain_contrastive(
     config: Path = typer.Option(
