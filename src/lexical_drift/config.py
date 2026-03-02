@@ -398,10 +398,12 @@ def load_eval_temporal_config(path: str | Path) -> EvalTemporalConfig:
         raise ValueError("train_months must be >= 1")
     if config.model_type not in {"gru", "baseline_lr", "attention", "transformer"}:
         raise ValueError("model_type must be one of: gru, baseline_lr, attention, transformer")
-    if config.loss_type not in {"bce", "focal"}:
-        raise ValueError("loss_type must be one of: bce, focal")
+    if config.loss_type not in {"bce", "weighted_bce", "focal"}:
+        raise ValueError("loss_type must be one of: bce, weighted_bce, focal")
     if config.pos_weight is not None and config.pos_weight <= 0:
         raise ValueError("pos_weight must be > 0 when provided")
+    if config.loss_type == "weighted_bce" and config.pos_weight is None:
+        raise ValueError("pos_weight must be provided when loss_type=weighted_bce")
     if config.focal_gamma < 0:
         raise ValueError("focal_gamma must be >= 0")
     if config.gru_hidden_dim <= 0:
@@ -500,10 +502,12 @@ def load_train_e2e_config(path: str | Path) -> TrainE2EConfig:
         raise ValueError("test_size must be between 0 and 1")
     if config.pooling not in {"cls", "mean"}:
         raise ValueError("pooling must be one of: cls, mean")
-    if config.loss_type not in {"bce", "focal"}:
-        raise ValueError("loss_type must be one of: bce, focal")
+    if config.loss_type not in {"bce", "weighted_bce", "focal"}:
+        raise ValueError("loss_type must be one of: bce, weighted_bce, focal")
     if config.pos_weight is not None and config.pos_weight <= 0:
         raise ValueError("pos_weight must be > 0 when provided")
+    if config.loss_type == "weighted_bce" and config.pos_weight is None:
+        raise ValueError("pos_weight must be provided when loss_type=weighted_bce")
     if config.focal_gamma < 0:
         raise ValueError("focal_gamma must be >= 0")
     if config.train_eval_threshold_mode not in {"fixed", "calibrate_on_val"}:
@@ -729,10 +733,12 @@ def load_train_multitask_config(path: str | Path) -> TrainMultiTaskConfig:
         raise ValueError("pooling must be one of: cls, mean")
     if not 0.0 < config.threshold < 1.0:
         raise ValueError("threshold must be between 0 and 1")
-    if config.loss_type not in {"bce", "focal"}:
-        raise ValueError("loss_type must be one of: bce, focal")
+    if config.loss_type not in {"bce", "weighted_bce", "focal"}:
+        raise ValueError("loss_type must be one of: bce, weighted_bce, focal")
     if config.pos_weight is not None and config.pos_weight <= 0:
         raise ValueError("pos_weight must be > 0 when provided")
+    if config.loss_type == "weighted_bce" and config.pos_weight is None:
+        raise ValueError("pos_weight must be provided when loss_type=weighted_bce")
     if config.focal_gamma < 0:
         raise ValueError("focal_gamma must be >= 0")
 

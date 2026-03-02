@@ -63,7 +63,9 @@ def build_binary_classification_loss(
     device: torch.device,
 ):
     torch = _require_torch()
-    if loss_type == "bce":
+    if loss_type in {"bce", "weighted_bce"}:
+        if loss_type == "weighted_bce" and pos_weight is None:
+            raise ValueError("weighted_bce requires pos_weight to be set")
         pos_weight_tensor = None
         if pos_weight is not None:
             pos_weight_tensor = torch.tensor(

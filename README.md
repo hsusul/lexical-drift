@@ -121,6 +121,34 @@ lexdrift eval-e2e-sweep \
 - `val_prob_hist.png`, `test_prob_hist.png`
 - `val_prob_summary.json`, `test_prob_summary.json`
 
+## Experimental Framework
+
+`eval-e2e-sweep` is the stability runner for repeated seeds. It writes:
+- `artifacts/experiment_runs/e2e_sweep_runs/e2e_sweep_summary.json` with per-metric
+  `mean/std/min/max`.
+- `artifacts/experiment_runs/e2e_sweep_runs/e2e_sweep_records.csv` with per-seed metrics.
+- `artifacts/experiment_runs/e2e_sweep_runs/threshold_stability.json` with threshold variance
+  and threshold-variance vs F1-variance correlation.
+
+Time-embedding ablation:
+
+```bash
+lexdrift ablate-time-embeddings \
+  --train-config configs/train_e2e_temporal.yaml \
+  --eval-config configs/eval_e2e_temporal_calib.yaml \
+  --seeds 1,2,3 --n-authors 50 --months 12 --difficulty hard
+```
+
+Loss-grid ablation (`bce`, `weighted_bce`, `focal` with configurable `pos_weight` and
+`focal_gamma`):
+
+```bash
+lexdrift ablate-loss \
+  --train-config configs/train_e2e_temporal.yaml \
+  --eval-config configs/eval_e2e_temporal_calib.yaml \
+  --seeds 1,2,3 --n-authors 50 --months 12 --difficulty hard
+```
+
 ## Contrastive Pretraining
 
 Pretrain the encoder with adjacent-month positives (InfoNCE), then use the checkpoint in
@@ -257,6 +285,8 @@ lexdrift eval-temporal-compare --config-a configs/eval_temporal_fixed.yaml --con
 lexdrift train-e2e --config configs/train_e2e_temporal.yaml
 lexdrift eval-e2e --config configs/eval_e2e_temporal.yaml --use-latest
 lexdrift eval-e2e-sweep --train-config configs/train_e2e_temporal.yaml --eval-config configs/eval_e2e_temporal_calib.yaml --seeds 1,2,3
+lexdrift ablate-time-embeddings --train-config configs/train_e2e_temporal.yaml --eval-config configs/eval_e2e_temporal_calib.yaml --seeds 1,2,3
+lexdrift ablate-loss --train-config configs/train_e2e_temporal.yaml --eval-config configs/eval_e2e_temporal_calib.yaml --seeds 1,2,3
 lexdrift pretrain-contrastive --config configs/pretrain_contrastive.yaml
 lexdrift pretrain-temporal-order --config configs/pretrain_temporal_order.yaml
 lexdrift train-multitask --config configs/train_multitask.yaml

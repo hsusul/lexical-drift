@@ -1045,7 +1045,7 @@ def eval_e2e_sweep(
         help="Synthetic generation preset difficulty.",
     ),
     artifact_root: Path = typer.Option(
-        Path("artifacts"),
+        Path("artifacts/experiment_runs"),
         help="Root directory for e2e sweep outputs.",
     ),
     results_path: str = typer.Option(
@@ -1078,6 +1078,8 @@ def eval_e2e_sweep(
 
     typer.echo(f"[eval-e2e-sweep] results={result['results_path']}")
     typer.echo(f"[eval-e2e-sweep] records-csv={result['records_csv_path']}")
+    typer.echo(f"[eval-e2e-sweep] summary-json={result['summary_json_path']}")
+    typer.echo(f"[eval-e2e-sweep] threshold-stability={result['threshold_stability_path']}")
     typer.echo(f"[eval-e2e-sweep] metadata={result['run_metadata_path']}")
     typer.echo(
         "[eval-e2e-sweep] "
@@ -1087,15 +1089,151 @@ def eval_e2e_sweep(
     )
     summary = result["summary"] if isinstance(result["summary"], dict) else {}
     for metric in (
-        "accuracy",
         "f1",
-        "roc_auc",
         "pr_auc",
+        "roc_auc",
         "balanced_accuracy",
-        "threshold_used",
+        "chosen_threshold",
+        "brier_score",
+        "ece",
     ):
         text = _format_summary_stats(summary.get(metric))
         typer.echo(f"[eval-e2e-sweep]   {metric:>16} {text}")
+    threshold_stability = (
+        result["threshold_stability"] if isinstance(result["threshold_stability"], dict) else {}
+    )
+    if threshold_stability:
+        chosen_var = threshold_stability.get("chosen_threshold_variance")
+        corr = threshold_stability.get("threshold_f1_variance_correlation")
+        typer.echo(
+            "[eval-e2e-sweep] "
+            f"chosen_threshold_variance={_format_optional_metric(chosen_var)} "
+            f"threshold_f1_var_corr={_format_optional_metric(corr)}"
+        )
+
+
+@app.command("ablate-time-embeddings")
+def ablate_time_embeddings(
+    train_config: Path = typer.Option(
+        Path("configs/train_e2e_temporal.yaml"),
+        help="Path to e2e train config template.",
+    ),
+    eval_config: Path = typer.Option(
+        Path("configs/eval_e2e_temporal_calib.yaml"),
+        help="Path to e2e eval config template.",
+    ),
+    seeds: str = typer.Option(
+        "",
+        help="Comma-separated seeds (e.g. 1,2,3). Overrides --n-seeds/--start-seed.",
+    ),
+    n_seeds: int = typer.Option(3, min=1, help="Number of sequential seeds to run."),
+    start_seed: int = typer.Option(1, help="Starting seed when --seeds is not provided."),
+    n_authors: int = typer.Option(50, min=1, help="Synthetic authors per seed."),
+    months: int = typer.Option(12, min=2, help="Synthetic months per author."),
+    difficulty: Difficulty = typer.Option(
+        Difficulty.hard,
+        help="Synthetic generation preset difficulty.",
+    ),
+    artifact_root: Path = typer.Option(
+        Path("artifacts/experiment_runs"),
+        help="Root directory for ablation outputs.",
+    ),
+) -> None:
+    has_torch = _dependency_available("torch")
+    has_transformers = _dependency_available("transformers")
+    if not has_torch or not has_transformers:
+        typer.echo("[ablate-time-embeddings] skipping (torch and/or transformers not installed)")
+        return
+
+    from lexical_drift.eval.ablate_time_embeddings_e2e import run_ablate_time_embeddings
+
+    train_template = load_train_e2e_config(train_config)
+    eval_template = load_eval_e2e_config(eval_config)
+    seed_list = _resolve_seed_list(seeds, n_seeds, start_seed)
+    result = run_ablate_time_embeddings(
+        train_config_template=train_template,
+        eval_config_template=eval_template,
+        seeds=seed_list,
+        n_authors=n_authors,
+        months=months,
+        difficulty=difficulty.value,
+        artifact_root=artifact_root,
+    )
+    typer.echo(f"[ablate-time-embeddings] summary={result['summary_path']}")
+    typer.echo(f"[ablate-time-embeddings] deltas-csv={result['deltas_csv_path']}")
+    typer.echo(f"[ablate-time-embeddings] plot={result['plot_path']}")
+
+
+@app.command("ablate-loss")
+def ablate_loss(
+    train_config: Path = typer.Option(
+        Path("configs/train_e2e_temporal.yaml"),
+        help="Path to e2e train config template.",
+    ),
+    eval_config: Path = typer.Option(
+        Path("configs/eval_e2e_temporal_calib.yaml"),
+        help="Path to e2e eval config template.",
+    ),
+    seeds: str = typer.Option(
+        "",
+        help="Comma-separated seeds (e.g. 1,2,3). Overrides --n-seeds/--start-seed.",
+    ),
+    n_seeds: int = typer.Option(3, min=1, help="Number of sequential seeds to run."),
+    start_seed: int = typer.Option(1, help="Starting seed when --seeds is not provided."),
+    n_authors: int = typer.Option(50, min=1, help="Synthetic authors per seed."),
+    months: int = typer.Option(12, min=2, help="Synthetic months per author."),
+    difficulty: Difficulty = typer.Option(
+        Difficulty.hard,
+        help="Synthetic generation preset difficulty.",
+    ),
+    pos_weights: str = typer.Option(
+        "1,2,4",
+        help="Comma-separated positive class weights for weighted BCE and focal.",
+    ),
+    focal_gammas: str = typer.Option(
+        "1,2,4",
+        help="Comma-separated focal gamma values used when loss_type=focal.",
+    ),
+    artifact_root: Path = typer.Option(
+        Path("artifacts/experiment_runs"),
+        help="Root directory for ablation outputs.",
+    ),
+) -> None:
+    has_torch = _dependency_available("torch")
+    has_transformers = _dependency_available("transformers")
+    if not has_torch or not has_transformers:
+        typer.echo("[ablate-loss] skipping (torch and/or transformers not installed)")
+        return
+
+    from lexical_drift.eval.ablate_loss_e2e import run_ablate_loss
+
+    train_template = load_train_e2e_config(train_config)
+    eval_template = load_eval_e2e_config(eval_config)
+    seed_list = _resolve_seed_list(seeds, n_seeds, start_seed)
+    pos_weight_values = _parse_float_list(pos_weights, name="pos-weights")
+    focal_gamma_values = _parse_float_list(focal_gammas, name="focal-gammas")
+    result = run_ablate_loss(
+        train_config_template=train_template,
+        eval_config_template=eval_template,
+        seeds=seed_list,
+        n_authors=n_authors,
+        months=months,
+        difficulty=difficulty.value,
+        pos_weights=pos_weight_values,
+        focal_gammas=focal_gamma_values,
+        artifact_root=artifact_root,
+    )
+    typer.echo(f"[ablate-loss] summary={result['summary_path']}")
+    typer.echo(f"[ablate-loss] grid-csv={result['csv_path']}")
+    best = result.get("best_configuration")
+    if isinstance(best, dict):
+        typer.echo(
+            "[ablate-loss] best "
+            f"loss={best.get('loss_label')} "
+            f"pos_weight={best.get('pos_weight')} "
+            f"focal_gamma={best.get('focal_gamma')} "
+            f"f1_mean={_format_optional_metric(best.get('f1_mean'))}"
+        )
 
 
 @app.command("pretrain-contrastive")
