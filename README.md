@@ -155,6 +155,19 @@ Generate a consolidated markdown summary and best-config YAMLs:
 lexdrift summarize-experiments --artifact-root artifacts/experiment_runs
 ```
 
+Generate a browsable artifact index and paper-style report:
+
+```bash
+lexdrift index-artifacts --artifact-root artifacts/experiment_runs
+lexdrift render-paper-report --artifact-root artifacts/experiment_runs --out docs/REPORT.md
+```
+
+One-command hero demo (fast mode):
+
+```bash
+make demo-v2
+```
+
 ## Results
 
 Run the full reproducible reporting chain:
@@ -180,6 +193,10 @@ lexdrift ablate-loss \
 
 # 4) summary report + best configs
 lexdrift summarize-experiments --artifact-root artifacts/experiment_runs
+
+# 5) artifact index + paper-style report
+lexdrift index-artifacts --artifact-root artifacts/experiment_runs
+lexdrift render-paper-report --artifact-root artifacts/experiment_runs --out docs/REPORT.md
 ```
 
 Example summary output (short):
@@ -192,6 +209,22 @@ Example summary output (short):
 | delta_f1 mean±std | 0.0230±0.0100 |
 ## Loss Ablation Top Configurations
 | 1 | focal | 2.0 | 4.0 | 0.7200 | 0.8200 |
+```
+
+Outputs:
+- experiment summary: `artifacts/experiment_runs/EXPERIMENT_SUMMARY.md`
+- artifact index: `artifacts/experiment_runs/INDEX.md`
+- paper report: `docs/REPORT.md`
+- promoted best configs: `configs/best/train_e2e_best.yaml` and
+  `configs/best/eval_e2e_best.yaml`
+
+## Best Known Configs
+
+After running `lexdrift summarize-experiments`, use the promoted configs:
+
+```bash
+lexdrift train-e2e --config configs/best/train_e2e_best.yaml
+lexdrift eval-e2e --config configs/best/eval_e2e_best.yaml --use-latest
 ```
 
 ## Contrastive Pretraining
@@ -333,6 +366,9 @@ lexdrift eval-e2e-sweep --train-config configs/train_e2e_temporal.yaml --eval-co
 lexdrift ablate-time-embeddings --train-config configs/train_e2e_temporal.yaml --eval-config configs/eval_e2e_temporal_calib.yaml --seeds 1,2,3
 lexdrift ablate-loss --train-config configs/train_e2e_temporal.yaml --eval-config configs/eval_e2e_temporal_calib.yaml --seeds 1,2,3
 lexdrift summarize-experiments --artifact-root artifacts/experiment_runs
+lexdrift index-artifacts --artifact-root artifacts/experiment_runs
+lexdrift render-paper-report --artifact-root artifacts/experiment_runs --out docs/REPORT.md
+lexdrift run-hero-demo --fast
 lexdrift pretrain-contrastive --config configs/pretrain_contrastive.yaml
 lexdrift pretrain-temporal-order --config configs/pretrain_temporal_order.yaml
 lexdrift train-multitask --config configs/train_multitask.yaml

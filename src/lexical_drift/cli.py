@@ -1260,6 +1260,144 @@ def summarize_experiments(
         typer.echo(f"[summarize-experiments] train-best={result['train_best_config_path']}")
     if result.get("eval_best_config_path"):
         typer.echo(f"[summarize-experiments] eval-best={result['eval_best_config_path']}")
+    if result.get("promoted_train_best_config_path"):
+        typer.echo(
+            "[summarize-experiments] "
+            f"promoted-train-best={result['promoted_train_best_config_path']}"
+        )
+    if result.get("promoted_eval_best_config_path"):
+        typer.echo(
+            f"[summarize-experiments] promoted-eval-best={result['promoted_eval_best_config_path']}"
+        )
+
+
+@app.command("index-artifacts")
+def index_artifacts(
+    artifact_root: Path = typer.Option(
+        Path("artifacts/experiment_runs"),
+        help="Root directory containing experiment artifacts.",
+    ),
+) -> None:
+    from lexical_drift.eval.artifact_index import run_index_artifacts
+
+    result = run_index_artifacts(artifact_root=artifact_root)
+    typer.echo(f"[index-artifacts] index={result['index_path']}")
+
+
+@app.command("render-paper-report")
+def render_paper_report(
+    artifact_root: Path = typer.Option(
+        Path("artifacts/experiment_runs"),
+        help="Root directory containing experiment artifacts.",
+    ),
+    out: Path = typer.Option(
+        Path("docs/REPORT.md"),
+        help="Output markdown report path.",
+    ),
+) -> None:
+    from lexical_drift.eval.paper_report import run_render_paper_report
+
+    result = run_render_paper_report(
+        artifact_root=artifact_root,
+        out_path=out,
+    )
+    typer.echo(f"[render-paper-report] report={result['report_path']}")
+
+
+@app.command("run-hero-demo")
+def run_hero_demo(
+    artifact_root: Path = typer.Option(
+        Path("artifacts/experiment_runs"),
+        help="Root directory for experiment outputs.",
+    ),
+    report_out: Path = typer.Option(
+        Path("docs/REPORT.md"),
+        help="Output paper-style report path.",
+    ),
+    fast: bool = typer.Option(
+        True,
+        help="Run with tiny settings for a quick local demo.",
+    ),
+    seeds: str = typer.Option(
+        "",
+        help="Comma-separated seeds. Defaults depend on --fast.",
+    ),
+) -> None:
+    from lexical_drift.eval.ablate_loss_e2e import run_ablate_loss
+    from lexical_drift.eval.ablate_time_embeddings_e2e import run_ablate_time_embeddings
+    from lexical_drift.eval.artifact_index import run_index_artifacts
+    from lexical_drift.eval.eval_e2e_sweep import run_eval_e2e_sweep
+    from lexical_drift.eval.experiment_summary import run_summarize_experiments
+    from lexical_drift.eval.paper_report import run_render_paper_report
+
+    seed_list = _parse_int_list(seeds, name="seeds") if seeds else ([1, 2] if fast else [1, 2, 3])
+    n_authors = 20 if fast else 50
+    months = 6 if fast else 12
+    difficulty = "hard"
+
+    data_dir = artifact_root / "hero_demo_data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    synth_path = data_dir / "synth.csv"
+    save_synthetic_dataset(
+        out_path=synth_path,
+        n_authors=n_authors,
+        months=months,
+        random_seed=seed_list[0],
+        difficulty=difficulty,
+    )
+    typer.echo(f"[run-hero-demo] generated synth={synth_path}")
+
+    has_torch = _dependency_available("torch")
+    has_transformers = _dependency_available("transformers")
+    if has_torch and has_transformers:
+        train_template = load_train_e2e_config(Path("configs/train_e2e_temporal.yaml"))
+        eval_template = load_eval_e2e_config(Path("configs/eval_e2e_temporal_calib.yaml"))
+        run_eval_e2e_sweep(
+            train_config_template=train_template,
+            eval_config_template=eval_template,
+            seeds=seed_list,
+            n_authors=n_authors,
+            months=months,
+            difficulty=difficulty,
+            artifact_root=artifact_root,
+            results_path=artifact_root / "eval_e2e_sweep.jsonl",
+        )
+        typer.echo("[run-hero-demo] eval-e2e-sweep complete")
+
+        run_ablate_time_embeddings(
+            train_config_template=train_template,
+            eval_config_template=eval_template,
+            seeds=seed_list,
+            n_authors=n_authors,
+            months=months,
+            difficulty=difficulty,
+            artifact_root=artifact_root,
+        )
+        typer.echo("[run-hero-demo] ablate-time-embeddings complete")
+
+        run_ablate_loss(
+            train_config_template=train_template,
+            eval_config_template=eval_template,
+            seeds=seed_list,
+            n_authors=n_authors,
+            months=months,
+            difficulty=difficulty,
+            pos_weights=[1.0, 2.0] if fast else [1.0, 2.0, 4.0],
+            focal_gammas=[1.0, 2.0] if fast else [1.0, 2.0, 4.0],
+            artifact_root=artifact_root,
+        )
+        typer.echo("[run-hero-demo] ablate-loss complete")
+    else:
+        typer.echo("[run-hero-demo] skipping e2e steps (torch and/or transformers not installed)")
+
+    summary_result = run_summarize_experiments(
+        artifact_root=artifact_root, config_dir=Path("configs")
+    )
+    typer.echo(f"[run-hero-demo] summary={summary_result['summary_markdown_path']}")
+    index_result = run_index_artifacts(artifact_root=artifact_root)
+    typer.echo(f"[run-hero-demo] index={index_result['index_path']}")
+    paper_result = run_render_paper_report(artifact_root=artifact_root, out_path=report_out)
+    typer.echo(f"[run-hero-demo] report={paper_result['report_path']}")
 
 
 @app.command("pretrain-contrastive")
